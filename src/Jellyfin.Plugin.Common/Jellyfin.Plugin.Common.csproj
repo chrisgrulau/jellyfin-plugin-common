@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Built here only to compile and test the shared source in isolation; plugins compile the .cs files directly (Common.props) -->
+  <PropertyGroup>
+    <RootNamespace>Jellyfin.Plugin.Common</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Jellyfin.Plugin.Common.Tests" />
+  </ItemGroup>
+
+</Project>
