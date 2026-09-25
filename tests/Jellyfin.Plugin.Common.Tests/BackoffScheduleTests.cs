@@ -13,8 +13,40 @@ public class BackoffScheduleTests
         => Assert.Null(BackoffSchedule.Delay((FailureClass)failure, 1, TimeSpan.FromMinutes(5), 0.5));
 
     [Fact]
-    public void A_delay_stated_by_the_provider_wins()
-        => Assert.Equal(TimeSpan.FromHours(9), BackoffSchedule.Delay(FailureClass.ProviderLimit, 1, TimeSpan.FromHours(9), 0.5));
+    public void A_delay_stated_by_the_provider_wins_with_a_little_spread()
+    {
+        Assert.Equal(TimeSpan.FromHours(9), BackoffSchedule.Delay(FailureClass.ProviderLimit, 1, TimeSpan.FromHours(9), 0));
+        Assert.Equal(TimeSpan.FromHours(9.45), BackoffSchedule.Delay(FailureClass.ProviderLimit, 1, TimeSpan.FromHours(9), 0.5));
+    }
+
+    [Fact]
+    public void A_tiny_stated_delay_waits_at_least_a_second()
+        => Assert.Equal(BackoffSchedule.ProviderStatedMin, BackoffSchedule.Delay(FailureClass.Transient, 1, TimeSpan.FromTicks(1), 0));
+
+    [Theory]
+    [InlineData(0.0)]
+    [InlineData(0.999)]
+    public void A_huge_stated_delay_is_capped_without_overflowing(double jitter)
+    {
+        Assert.Equal(BackoffSchedule.ProviderStatedMax, BackoffSchedule.Delay(FailureClass.ProviderLimit, 1, TimeSpan.MaxValue, jitter));
+        Assert.Equal(BackoffSchedule.ProviderStatedMax, BackoffSchedule.Delay(FailureClass.ProviderLimit, 1, TimeSpan.FromDays(3650), jitter));
+        _ = DateTime.UtcNow + BackoffSchedule.Delay(FailureClass.ProviderLimit, 1, TimeSpan.MaxValue, jitter)!.Value;
+    }
+
+    [Fact]
+    public void Zero_or_negative_stated_delays_use_the_schedule()
+    {
+        var own = BackoffSchedule.Delay(FailureClass.ProviderLimit, 1, null, 0.5);
+        Assert.Equal(own, BackoffSchedule.Delay(FailureClass.ProviderLimit, 1, TimeSpan.Zero, 0.5));
+        Assert.Equal(own, BackoffSchedule.Delay(FailureClass.ProviderLimit, 1, TimeSpan.FromSeconds(-5), 0.5));
+    }
+
+    [Theory]
+    [InlineData(double.NaN)]
+    [InlineData(-0.1)]
+    [InlineData(1.0)]
+    public void Bad_jitter_is_refused(double jitter)
+        => Assert.Throws<ArgumentOutOfRangeException>(() => BackoffSchedule.Delay(FailureClass.Transient, 1, null, jitter));
 
     [Theory]
     [InlineData(1, 1.0)]
