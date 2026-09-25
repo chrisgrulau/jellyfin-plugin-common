@@ -25,3 +25,5 @@ All notable changes to this project are documented here. The format follows
 - Builds: SDK pinned in `global.json`, lock files with locked-mode restores in CI, checkout without persisted
   credentials and a job timeout; Dependabot watches the SDK. `.gitignore` covers test audio and speech models, and its
   header no longer says no keys are handled (BLD-01, BLD-03, DOC-01).
+- `global.json` accepts any .NET 10 SDK (10.0.100 and later), so the SDKs shipped by Linux distributions (10.0.1xx)
+  build it; CI uses the newest .NET 10 SDK, and Dependabot no longer raises the minimum. Package versions stay locked.
