@@ -28,3 +28,8 @@ All notable changes to this project are documented here. The format follows
 - `global.json` accepts any .NET 10 SDK (10.0.100 and later), so the SDKs shipped by Linux distributions (10.0.1xx)
   build it; CI uses the newest .NET 10 SDK, and Dependabot no longer raises the minimum. Package versions stay locked.
 - The plugin family is now called **Shoal** (Shoal Ingest, Shoal Subtitles, Shoal AI).
+- Secrets: `KeyFile`, a write-only store for API keys in an owner-only (0600) file separate from the plugin
+  configuration (moved here from Shoal AI so every plugin uses the same implementation), and `Redaction`, which strips
+  known keys (whole or partial), bearer tokens and common key shapes from text before it is logged.
+- `HttpFailure`: sorts HTTP statuses and network exceptions into the failure classes (an exhausted quota reported as
+  400, 403 or 429 counts as a provider limit), and reads `Retry-After`, `retry-after-ms` and rate-limit reset headers.
