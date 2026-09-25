@@ -57,3 +57,10 @@ currency. So:
 - An optional **extra percentage** is added to every converted cost, for taxes charged on overseas services (such as
   GST) or a card's foreign-transaction fee. It defaults to 0.
 - When a budget is shared across plugins, its owner (see *Budgets*) also owns its currency.
+
+## Keys and errors
+
+API keys live in an owner-only file per plugin (`KeyFile`), never in the plugin configuration, so the settings API can
+only report whether a key is set, replace it or clear it. Anything from a provider that is logged or shown goes through
+`Redaction` first. `HttpFailure` turns a failed call into a failure class, reading the provider's own wait time where it
+gives one; `BackoffSchedule` then bounds and spreads it.
