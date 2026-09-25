@@ -22,6 +22,15 @@ internal static class BackoffSchedule
     /// <summary>How long transient failures may persist before the user is alerted.</summary>
     public static readonly TimeSpan TransientAlertAfter = TimeSpan.FromMinutes(30);
 
+    /// <summary>The shortest wait accepted from a provider.</summary>
+    public static readonly TimeSpan ProviderStatedMin = TimeSpan.FromSeconds(1);
+
+    /// <summary>
+    /// The longest wait accepted from a provider (about a billing period). A buggy or hostile <c>Retry-After</c>, or a
+    /// reset time years away, must not park the queue for ever.
+    /// </summary>
+    public static readonly TimeSpan ProviderStatedMax = TimeSpan.FromDays(31);
+
     /// <summary>How often connectivity is re-checked while there is no network connection.</summary>
     public static readonly TimeSpan ConnectivityProbeInterval = TimeSpan.FromMinutes(1);
 
@@ -30,12 +39,19 @@ internal static class BackoffSchedule
     /// </summary>
     /// <param name="failure">What went wrong.</param>
     /// <param name="attempt">Retry number, starting at 1.</param>
-    /// <param name="providerSaid">The delay the provider asked for, if it gave one.</param>
+    /// <param name="providerSaid">The delay the provider asked for, if it gave one. It is kept between
+    /// <see cref="ProviderStatedMin"/> and <see cref="ProviderStatedMax"/>, and up to 10 % is added so everything waiting
+    /// on the same reset time doesn't retry at the same instant (never less than the provider asked for).</param>
     /// <param name="jitter">A value in [0, 1) used to spread retries so they don't all fire together.</param>
     /// <returns>The delay, or <c>null</c> when this failure is never retried automatically.</returns>
     public static TimeSpan? Delay(FailureClass failure, int attempt, TimeSpan? providerSaid, double jitter)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(attempt, 1);
+        if (double.IsNaN(jitter))
+        {
+            throw new ArgumentOutOfRangeException(nameof(jitter), jitter, "Jitter must be a number in [0, 1).");
+        }
+
         ArgumentOutOfRangeException.ThrowIfNegative(jitter);
         ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(jitter, 1);
 
@@ -46,7 +62,10 @@ internal static class BackoffSchedule
 
         if (providerSaid is { } stated && stated > TimeSpan.Zero)
         {
-            return stated;
+            // Clamp first (a huge value can't overflow the arithmetic below), then spread by up to +10 %
+            var bounded = stated < ProviderStatedMin ? ProviderStatedMin : stated > ProviderStatedMax ? ProviderStatedMax : stated;
+            var spread = bounded + (bounded * (0.1 * jitter));
+            return spread > ProviderStatedMax ? ProviderStatedMax : spread;
         }
 
         return failure switch
