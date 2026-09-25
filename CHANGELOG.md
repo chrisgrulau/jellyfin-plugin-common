@@ -15,3 +15,13 @@ All notable changes to this project are documented here. The format follows
   reset time years away) can't park a queue indefinitely or overflow date arithmetic. Up to 10 % is added (never
   less than the provider asked for), so everything waiting on the same reset doesn't retry at the same instant. A NaN
   jitter is refused (COM-01).
+
+### Added
+- Currencies: `Money` (a `decimal` amount with its ISO 4217 code), the choosable currencies, the European Central
+  Bank's daily reference rates (validated remote input), and conversion of a provider's charge into the user's currency
+  with an optional extra percentage for taxes or card fees. Missing or stale rates make a cost unknown, never zero.
+
+### Changed
+- Builds: SDK pinned in `global.json`, lock files with locked-mode restores in CI, checkout without persisted
+  credentials and a job timeout; Dependabot watches the SDK. `.gitignore` covers test audio and speech models, and its
+  header no longer says no keys are handled (BLD-01, BLD-03, DOC-01).

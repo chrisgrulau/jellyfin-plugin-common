@@ -26,8 +26,9 @@ While a provider is limited, only a single cheap probe is sent at each retry tim
 
 ## Budgets
 
-Budgets are per service (and optionally per purpose, such as `subtitles.sync` or `ingest.match`): per request, per day,
-per month, or none. "None" still honours limits enforced by the provider. Bulk runs are estimated first; scheduled runs
+Budgets are per service (and optionally per purpose, such as `subtitles.sync` or `ingest.match`): per request, per day
+or per month. A limit of 0 means no paid usage; unlimited is a separate, explicit choice with a warning, and still
+honours limits enforced by the provider. The default is a small cap. Bulk runs are estimated first; scheduled runs
 either wait for approval of the estimate or run automatically within the budget.
 
 ## Spend tracking
@@ -38,3 +39,21 @@ Cost is recorded per call from the most authoritative source available:
 2. The provider's cost or usage API (some need an administrator key, which is optional).
 3. Usage from the response (tokens, audio seconds) × a published price table. The table is a versioned file in this
    repository, fetched periodically by the plugins; user overrides always win.
+
+## Currencies
+
+People set and see budgets in their own currency (for example AUD); providers charge in theirs. Deepgram, OpenAI,
+Anthropic and AssemblyAI price and bill in US dollars; Google Cloud and Azure can bill in the billing account's local
+currency. So:
+
+- Every price and every recorded cost is **`Money`: a `decimal` amount with the ISO 4217 code it was charged in**. Costs
+  are stored as charged and only converted for display and for checking a budget.
+- Conversion uses the **European Central Bank's daily euro reference rates** (free, no key, about 30 currencies). The
+  file is remote input: one fixed HTTPS URL, at most 64 KB, parsed without DTDs, every value checked; anything odd
+  means no new rates, and the last good ones are kept.
+- Rates more than **7 days** old count as unknown (the ECB publishes on working days only). A cost that can't be
+  converted is **unknown, never zero**: paid calls in another currency stop, with an alert, until rates are available
+  again. A charge already in the user's currency needs no rates.
+- An optional **extra percentage** is added to every converted cost, for taxes charged on overseas services (such as
+  GST) or a card's foreign-transaction fee. It defaults to 0.
+- When a budget is shared across plugins, its owner (see *Budgets*) also owns its currency.

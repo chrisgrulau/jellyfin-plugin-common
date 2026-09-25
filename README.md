@@ -11,6 +11,7 @@ It holds what every plugin that calls an external service needs, written once:
 | Resilience | Classifies failures (no connection, transient, provider limit, authentication, bad request) and applies the right retry and back-off to each, honouring the provider's own reset times. |
 | Budgets and rate limits | Per-service and per-purpose spending caps (per request, day, month or none), request-rate limits, and approve-before-running estimates. |
 | Spend tracking | Records what every call cost, using the most authoritative source available (cost in the response, the provider's cost API, published prices × usage). |
+| Currencies | Keeps every cost in the currency it was charged in and converts it to the user's currency (ECB daily reference rates, validated; unknown rates block paid calls rather than count as free). |
 | Alerts | Consistent, de-duplicated user-facing alerts ("limit reached — resets at …", "check your API key"). |
 
 ## How plugins use it
@@ -43,4 +44,4 @@ Design notes: [`docs/DESIGN.md`](docs/DESIGN.md).
 
 ## Licence
 
-[GPL-3.0](LICENSE), in line with Jellyfin and its official plugins.
+[GPL-3.0](LICENSE), in line with Jellyfin's official plugins (the server itself is GPL-2.0).
