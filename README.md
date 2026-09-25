@@ -1,5 +1,10 @@
 # jellyfin-plugin-common
 
+Shared source for **Shoal**, a family of Jellyfin plugins: [Shoal
+Ingest](https://github.com/chrisgrulau/jellyfin-ingest), [Shoal
+Subtitles](https://github.com/chrisgrulau/jellyfin-subtitles) and [Shoal
+AI](https://github.com/chrisgrulau/jellyfin-ai).
+
 Shared source for a family of [Jellyfin](https://jellyfin.org) plugins:
 [Ingest](https://github.com/chrisgrulau/jellyfin-ingest), [Subtitles](https://github.com/chrisgrulau/jellyfin-subtitles)
 and [AI](https://github.com/chrisgrulau/jellyfin-ai). It is **not a plugin** and is never installed on its own.
