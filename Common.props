@@ -1,0 +1,15 @@
+<Project>
+  <!--
+    Import this from a plugin project to compile the shared source into the plugin itself:
+
+      <Import Project="$(MSBuildThisFileDirectory)../../external/common/Common.props" />
+
+    The code is compiled as internal types of each plugin rather than shipped as a shared DLL, so two plugins can carry
+    different versions without an assembly clash when Jellyfin loads them side by side.
+  -->
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)src/Jellyfin.Plugin.Common/**/*.cs"
+             Exclude="$(MSBuildThisFileDirectory)src/Jellyfin.Plugin.Common/obj/**;$(MSBuildThisFileDirectory)src/Jellyfin.Plugin.Common/bin/**"
+             Link="Common/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>
