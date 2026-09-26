@@ -208,6 +208,37 @@ internal sealed class SpendLedger
         }
     }
 
+    /// <summary>
+    /// What a provider has cost since a moment (open reservations included), in one currency: for counting down a
+    /// prepaid credit bought on a date. No extra percentage is added (a prepaid credit is spent as charged).
+    /// </summary>
+    /// <param name="provider">Provider id.</param>
+    /// <param name="since">From when.</param>
+    /// <param name="currency">The currency to add up in (the credit's).</param>
+    /// <param name="rates">The latest exchange rates, if any (only needed for charges in another currency).</param>
+    /// <returns>The total, or <c>null</c> if some of it can't be converted.</returns>
+    public Money? SpentSince(string provider, DateTimeOffset since, string currency, ExchangeRates? rates)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(provider);
+        var to = CurrencyCode.Normalise(currency) ?? throw new ArgumentException("Not an ISO 4217 currency code.", nameof(currency));
+        lock (_lock)
+        {
+            var today = DateOnly.FromDateTime(_clock.GetLocalNow().DateTime);
+            decimal total = 0;
+            foreach (var e in Load().Where(e => e.Time >= since && SameProvider(e.Provider, provider)))
+            {
+                if (CostConverter.ToUserCurrency(e.Amount, to, rates, today, 0m) is not { } c)
+                {
+                    return null;
+                }
+
+                total += c.Amount;
+            }
+
+            return new Money(total, to);
+        }
+    }
+
     private static int MonthOf(DateTimeOffset t) => (t.Year * 12) + t.Month;
 
     private static bool SameProvider(string a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
