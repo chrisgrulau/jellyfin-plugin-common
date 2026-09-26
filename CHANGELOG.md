@@ -38,6 +38,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- `HttpFailure.Classify(Exception)` keeps the class of a failure that is already a `ProviderException`. Before, it
+  was treated as transient, so an authentication failure or used-up allowance could be retried as if it would pass.
+
 - **FAM-02:** the entry-point clients (`AiBridgeClient`, `SpeechBridgeClient`) send letters in every script as they
   are, not as `\uXXXX` escapes. Before, non-English text was six times its size, was often refused as too large, and
   reached the model escaped.

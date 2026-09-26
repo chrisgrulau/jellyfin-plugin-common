@@ -127,6 +127,13 @@ public sealed class SecretsAndHttpTests : IDisposable
     }
 
     [Fact]
+    public void An_already_classified_failure_keeps_its_class()
+    {
+        Assert.Equal(FailureClass.Authentication, HttpFailure.Classify(new ProviderException("x") { Failure = FailureClass.Authentication }));
+        Assert.Equal(FailureClass.ProviderLimit, HttpFailure.Classify(new ProviderException("x") { Failure = FailureClass.ProviderLimit }));
+    }
+
+    [Fact]
     public void Any_429_is_rate_limited_whatever_its_class()
     {
         Assert.True(HttpFailure.IsRateLimited(new ProviderException("x") { StatusCode = HttpStatusCode.TooManyRequests, Failure = FailureClass.Transient }));

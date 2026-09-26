@@ -80,6 +80,8 @@ internal static class HttpFailure
 
         return exception switch
         {
+            // Already classified (by ProviderHttp or a plugin): keep its class
+            ProviderException p => p.Failure,
             HttpRequestException { StatusCode: { } status } => Classify(status),
             HttpRequestException { InnerException: SocketException s } when s.SocketErrorCode is SocketError.HostNotFound or SocketError.NetworkUnreachable or SocketError.HostUnreachable or SocketError.NetworkDown or SocketError.TryAgain
                 => FailureClass.NoConnection,
