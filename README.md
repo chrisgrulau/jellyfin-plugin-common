@@ -8,11 +8,15 @@ It holds what every plugin that calls an external service needs, written once:
 
 | Area | What it does |
 |---|---|
-| Resilience | Classifies failures (no connection, transient, provider limit, authentication, bad request) and applies the right retry and back-off to each, honouring the provider's own reset times. |
-| Budgets and rate limits | Per-service and per-purpose spending caps (per request, day, month or none), request-rate limits, and approve-before-running estimates. |
-| Spend tracking | Records what every call cost, using the most authoritative source available (cost in the response, the provider's cost API, published prices × usage). |
-| Currencies | Keeps every cost in the currency it was charged in and converts it to the user's currency (ECB daily reference rates, validated; unknown rates block paid calls rather than count as free). |
-| Alerts | Consistent, de-duplicated user-facing alerts ("limit reached — resets at …", "check your API key"). |
+| Resilience | Classifies failures (no connection, transient, provider limit, authentication, bad request), reads the provider's `Retry-After`, and redacts secrets from error text. |
+| Spending limits | Monthly limits overall and per provider, in the user's currency: every paid call is reserved against them first, then settled with its actual cost (or released). |
+| Spend tracking | A ledger of what every call cost (published prices × usage), kept for the prepaid-credit countdown. Unknown costs block paid calls rather than count as free. |
+| Currencies | Keeps every cost in the currency it was charged in and converts it with the European Central Bank's daily reference rates (validated; the last good rates are kept while offline). |
+| Keys | An owner-only key file per plugin; keys are write-only from the settings pages. |
+| Cross-plugin calls | Clients for the AI plugin's and the Subtitles plugin's in-process entry points (JSON in and out, no shared types). |
+
+Not built yet (planned): per-purpose and per-day budgets, request-rate limits, approve-before-running estimates, and
+shared user-facing alerts. Each plugin currently reports problems on its own page and in Jellyfin's Activity log.
 
 ## How plugins use it
 
