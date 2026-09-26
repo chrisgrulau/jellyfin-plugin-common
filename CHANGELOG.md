@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `AiBridgeClient`: asks the family's AI plugin, if installed, through its in-process entry point.
+  - It finds the plugin by assembly and type name, sends version-1 JSON and reads the reply, so no types are shared
+    between plugins.
+  - A missing plugin, a refusal, a failure or a bad reply comes back as a reason (never an exception), so callers fall
+    back to review.
 - `SpendLedger.SpentSince` adds up what one provider has cost since a moment, in one currency, for counting down a
   prepaid credit.
 - **Spending:**
