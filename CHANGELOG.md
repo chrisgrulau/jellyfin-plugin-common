@@ -5,6 +5,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **FAM-01:** `IsoLanguages`, which maps ISO 639 codes and names without the server's culture data.
+  - It maps two-letter, three-letter (terminology and bibliographic) and English-name forms to each other, for 137
+    languages.
+  - Before, .NET knew no languages with invariant globalization or minimal ICU data (Alpine, some containers), so
+    language matching silently found nothing.
+  - The table was generated from .NET's own culture data.
+
 ### Fixed
 
 - **FAM-02:** the entry-point clients (`AiBridgeClient`, `SpeechBridgeClient`) send letters in every script as they
