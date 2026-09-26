@@ -129,8 +129,8 @@ public sealed class SecretsAndHttpTests : IDisposable
     [Fact]
     public void An_already_classified_failure_keeps_its_class()
     {
-        Assert.Equal(FailureClass.Authentication, HttpFailure.Classify(new ProviderException("x") { Failure = FailureClass.Authentication }));
-        Assert.Equal(FailureClass.ProviderLimit, HttpFailure.Classify(new ProviderException("x") { Failure = FailureClass.ProviderLimit }));
+        Assert.Equal(FailureClass.Authentication, HttpFailure.Classify(new ProviderException("x") { Failure = FailureClass.Authentication }, TestContext.Current.CancellationToken));
+        Assert.Equal(FailureClass.ProviderLimit, HttpFailure.Classify(new ProviderException("x") { Failure = FailureClass.ProviderLimit }, TestContext.Current.CancellationToken));
     }
 
     [Fact]
