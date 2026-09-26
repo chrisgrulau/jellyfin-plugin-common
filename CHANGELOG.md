@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `SpeechBridgeClient`: asks the family's Subtitles plugin, if installed, to transcribe a short stretch of a video
+  (at most 180 seconds) through its in-process entry point, the same way as `AiBridgeClient`.
+  - The Subtitles plugin chooses the speech-to-text service and applies its own spending limits.
+  - A missing plugin, a refusal, a failure or a bad reply comes back as a reason, never an exception.
 - `AiBridgeClient`: asks the family's AI plugin, if installed, through its in-process entry point.
   - It finds the plugin by assembly and type name, sends version-1 JSON and reads the reply, so no types are shared
     between plugins.
