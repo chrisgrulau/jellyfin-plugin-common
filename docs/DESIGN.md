@@ -62,7 +62,8 @@ time, and whether it has been settled.
 - A successful call is settled at its actual cost, from its result (or the estimate if that can't be worked out).
 - A call that failed but was billed anyway (a refusal, a cut-off or unreadable answer) is settled at what it used: by
   default a `ProviderException` with `Charged` set, at its `ChargedCost` or else the estimate.
-- Any other failure, cancellation included, releases the reservation.
+- A failure that certainly wasn't billed (a provider refusal, no answer, or a cancellation) releases the reservation.
+- An unexpected failure is recorded at the estimate, since it may have been billed.
 
 A plugin whose exception type is public (so it can't derive from the internal `ProviderException`) passes its own
 `MeteredCallOptions` (`IsCharged`, `ChargedCost`, `Refuse`).

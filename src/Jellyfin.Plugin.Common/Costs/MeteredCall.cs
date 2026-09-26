@@ -27,6 +27,13 @@ internal sealed record MeteredCallOptions
     public Func<Exception, Money?> ChargedCost { get; init; } = static ex => (ex as ProviderException)?.ChargedCost;
 
     /// <summary>
+    /// Gets how to tell that a failed call certainly wasn't billed (its reservation is then released). By default, a
+    /// <see cref="ProviderException"/> without <see cref="ProviderException.Charged"/>, or a cancellation. Any other
+    /// failure might have been billed, so it is recorded at the estimate, erring on the side of spending less.
+    /// </summary>
+    public Func<Exception, bool> IsUncharged { get; init; } = static ex => ex is ProviderException or OperationCanceledException;
+
+    /// <summary>
     /// Gets the exception thrown when the limits refuse the call, from the reason to show people. By default a
     /// <see cref="ProviderException"/> of class <see cref="FailureClass.ProviderLimit"/>.
     /// </summary>
@@ -40,7 +47,8 @@ internal sealed record MeteredCallOptions
 /// Runs a paid call within the spending limits, in one place for every plugin: its estimated cost is reserved on the
 /// <see cref="SpendLedger"/> first (the call isn't made if the limits refuse it); a successful call is settled at its
 /// actual cost; a call that failed but was billed anyway (see <see cref="MeteredCallOptions.IsCharged"/>) is settled at
-/// what it used; any other failure, cancellation included, releases the reservation.
+/// what it used; a failure that certainly wasn't billed (see <see cref="MeteredCallOptions.IsUncharged"/>, cancellation
+/// included) releases the reservation; an unexpected failure is recorded at the estimate.
 /// </summary>
 internal static class MeteredCall
 {
@@ -95,10 +103,16 @@ internal static class MeteredCall
             Settle(ledger, reservation, o.ChargedCost(ex) ?? estimate, o);
             throw;
         }
-        catch
+        catch (Exception ex) when (o.IsUncharged(ex))
         {
             // Refused by the provider, never answered, or cancelled: not charged
             ledger.Release(reservation);
+            throw;
+        }
+        catch (Exception)
+        {
+            // Unexpected: it may have been billed, so it is recorded at the estimate
+            Settle(ledger, reservation, estimate, o);
             throw;
         }
 

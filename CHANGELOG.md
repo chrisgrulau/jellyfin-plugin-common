@@ -22,7 +22,8 @@ All notable changes to this project are documented here. The format follows
   - `Resilience/ProviderHttp`: `SendAsync` and `SendForBytesAsync` classify failures with `HttpFailure`, honour
     `Retry-After`, cap every body (reply or error) at the caller's limit, and remove keys from messages.
   - `Costs/MeteredCall`: reserve, call, then settle at the actual cost, settle a billed failure at what it used, or
-    release. `MeteredCallOptions` lets a plugin with its own exception type take part.
+    release one that certainly wasn't billed; an unexpected failure is recorded at the estimate. `MeteredCallOptions`
+    lets a plugin with its own exception type take part.
   - `Costs/SpendingStore`: a plugin's ledger, shipped prices and exchange rates together, with rates refreshed when due.
   - `CurrencyCode.NormaliseOr(code, fallback)`: only supported codes pass.
 

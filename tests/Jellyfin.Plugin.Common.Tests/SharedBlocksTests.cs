@@ -258,10 +258,19 @@ public sealed class SharedBlocksTests : IDisposable
     {
         var ledger = Ledger();
         await Assert.ThrowsAsync<ProviderException>(() => Run<int>(ledger, _ => throw new ProviderException("401") { Failure = FailureClass.Authentication }, _ => null, token: TestContext.Current.CancellationToken));
-        await Assert.ThrowsAsync<HttpRequestException>(() => Run<int>(ledger, _ => throw new HttpRequestException("down"), _ => null, token: TestContext.Current.CancellationToken));
         await Assert.ThrowsAsync<OperationCanceledException>(() => Run<int>(ledger, _ => throw new OperationCanceledException(), _ => null, token: TestContext.Current.CancellationToken));
 
         Assert.Equal(0m, ledger.ThisMonth(Usd, null).Total);
+    }
+
+    [Fact]
+    public async Task An_unexpected_failure_is_recorded_at_the_estimate()
+    {
+        // It might have been billed, so it errs on the side of spending less
+        var ledger = Ledger();
+        await Assert.ThrowsAsync<InvalidOperationException>(() => Run<int>(ledger, _ => throw new InvalidOperationException("bug"), _ => null, token: TestContext.Current.CancellationToken));
+
+        Assert.Equal(2m, ledger.ThisMonth(Usd, null).Total);
     }
 
     [Fact]
@@ -285,6 +294,7 @@ public sealed class SharedBlocksTests : IDisposable
         var options = new MeteredCallOptions
         {
             IsCharged = ex => ex is InvalidOperationException { Message: "billed" },
+            IsUncharged = ex => ex is InvalidOperationException { Message: "not billed" },
             ChargedCost = _ => Money.Of(0.75m, "USD"),
             Refuse = why => new InvalidOperationException("refused: " + why),
         };
