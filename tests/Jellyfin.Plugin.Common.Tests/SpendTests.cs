@@ -143,6 +143,21 @@ public sealed class SpendTests : IDisposable
         Assert.Null(PriceTable.Parse("not json"));
     }
 
+    [Fact]
+    public void Spending_since_a_date_counts_one_provider_in_the_credits_currency()
+    {
+        var ledger = Ledger();
+        ledger.TryReserve("anthropic", "p", Money.Of(0.40m, "USD"), Aud(null), Rates);
+        ledger.TryReserve("deepgram", "p", Money.Of(1m, "USD"), Aud(null), Rates);
+        _clock.Now = _clock.Now.AddDays(2);
+        ledger.TryReserve("anthropic", "p", Money.Of(0.10m, "USD"), Aud(null), Rates);
+
+        Assert.Equal(Money.Of(0.50m, "USD"), ledger.SpentSince("anthropic", _clock.Now.AddDays(-5), "USD", null));
+        Assert.Equal(Money.Of(0.10m, "USD"), ledger.SpentSince("anthropic", _clock.Now.AddDays(-1), "USD", null));
+        Assert.Null(ledger.SpentSince("anthropic", _clock.Now.AddDays(-5), "AUD", null));
+        Assert.Equal(0.75m, decimal.Round(ledger.SpentSince("anthropic", _clock.Now.AddDays(-5), "AUD", Rates with { Date = new DateOnly(2026, 9, 27) })!.Value.Amount, 10));
+    }
+
     private const string Ecb = """
         <?xml version="1.0" encoding="UTF-8"?>
         <gesmes:Envelope xmlns:gesmes="http://www.gesmes.org/xml/2002-08-01" xmlns="http://www.ecb.int/vocabulary/2002-08-01/eurofxref">

@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `SpendLedger.SpentSince` adds up what one provider has cost since a moment, in one currency, for counting down a
+  prepaid credit.
 - **Spending:**
   - `SpendLedger` reserves each paid call's estimated cost before it is made and settles the actual cost afterwards,
     atomically across concurrent calls. It checks an overall monthly limit and per-provider limits in the user's
