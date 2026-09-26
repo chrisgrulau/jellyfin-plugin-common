@@ -6,6 +6,18 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Spending:**
+  - `SpendLedger` reserves each paid call's estimated cost before it is made and settles the actual cost afterwards,
+    atomically across concurrent calls. It checks an overall monthly limit and per-provider limits in the user's
+    currency (0 = no paid use, no limit = explicit).
+  - Costs are kept as charged and converted only for checks. A cost that can't be converted refuses the call, and a
+    damaged ledger blocks paid use for the rest of the month instead of starting again from zero.
+- `PriceTable`: validated published prices (per audio minute or per million tokens) with per-model and per-provider
+  lookup. A price that isn't listed is unknown.
+- `ExchangeRateStore`: fetches the ECB daily rates from their one fixed address (64 KB cap, at most about once a day),
+  saves the last good rates, and keeps them when a fetch fails.
+
+### Added
 - Repository scaffolding: licence (GPL-3.0), README, design notes, contribution and security policies, CI.
 - `Common.props` for compiling the shared source into a plugin as internal code.
 - Failure classes (no connection, transient, provider limit, authentication, bad request) and their back-off schedule.

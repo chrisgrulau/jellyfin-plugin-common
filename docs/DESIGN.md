@@ -40,6 +40,19 @@ Cost is recorded per call from the most authoritative source available:
 3. Usage from the response (tokens, audio seconds) × a published price table. The table is a versioned file in this
    repository, fetched periodically by the plugins; user overrides always win.
 
+### Ledger
+
+`SpendLedger` implements the budget rules above. It holds one entry per paid call: provider, purpose, amount as charged,
+time, and whether it has been settled.
+- **Before a call:** `TryReserve` converts the estimate and the month's entries so far to the user's currency, checks
+  the overall and per-provider limits, and records a reservation, all under one lock.
+- **After a call:** `Settle` replaces the estimate with the actual cost, or `Release` drops it if nothing was charged.
+- **Interrupted calls:** a reservation that is never settled keeps counting at its estimate.
+- **Storage:** the file is replaced atomically on every change. A damaged file is set aside, and paid use stops until
+  the month ends.
+- **Ownership:** while each plugin owns its own budget, each keeps its own ledger. Once the AI plugin owns shared
+  budgets, it keeps this ledger for all of them.
+
 ## Currencies
 
 People set and see budgets in their own currency (for example AUD); providers charge in theirs. Deepgram, OpenAI,
