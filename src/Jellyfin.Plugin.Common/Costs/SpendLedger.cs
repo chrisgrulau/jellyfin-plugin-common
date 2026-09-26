@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
+using Jellyfin.Plugin.Common.Storage;
 
 namespace Jellyfin.Plugin.Common.Costs;
 
@@ -262,36 +263,23 @@ internal sealed class SpendLedger
             return _entries;
         }
 
-        try
+        var read = JsonFile.Read<List<SpendEntry>>(_path, JsonOptions);
+        switch (read.State)
         {
-            _entries = File.Exists(_path) ? JsonSerializer.Deserialize<List<SpendEntry>>(File.ReadAllText(_path), JsonOptions) : null;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            // Unreadable for now (locked by a backup or antivirus, a share hiccup): refuse paid calls this time, leave the
-            // file where it is, and read it again next time. Nothing is cached, so nothing can be saved over it.
-            _entries = null;
-            return [Unreadable(_clock.GetLocalNow())];
-        }
-        catch (JsonException)
-        {
-            // Damaged: keep the file for inspection and refuse to guess; a damaged ledger blocks paid calls this month
-            _entries = null;
-            try
-            {
-                if (File.Exists(_path))
-                {
-                    File.Move(_path, _path + ".damaged-" + _clock.GetUtcNow().ToUnixTimeSeconds(), overwrite: true);
-                }
-            }
-            catch (Exception moveEx) when (moveEx is IOException or UnauthorizedAccessException)
-            {
-                // Left in place
-            }
-
-            _entries = [Blocker(_clock.GetLocalNow())];
-            Save();
-            return _entries;
+            case JsonFileState.Unreadable:
+                // Unreadable for now (locked by a backup or antivirus, a share hiccup): refuse paid calls this time, leave the
+                // file where it is, and read it again next time. Nothing is cached, so nothing can be saved over it.
+                _entries = null;
+                return [Unreadable(_clock.GetLocalNow())];
+            case JsonFileState.Damaged:
+                // Damaged: keep the file for inspection and refuse to guess; a damaged ledger blocks paid calls this month
+                JsonFile.SetAside(_path, _clock);
+                _entries = [Blocker(_clock.GetLocalNow())];
+                Save();
+                return _entries;
+            default:
+                _entries = read.Value;
+                break;
         }
 
         var cutoff = _clock.GetLocalNow() - KeptFor;
@@ -317,10 +305,7 @@ internal sealed class SpendLedger
 
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-            var temp = _path + ".tmp";
-            File.WriteAllText(temp, JsonSerializer.Serialize(_entries, JsonOptions));
-            File.Move(temp, _path, overwrite: true);
+            JsonFile.WriteAtomic(_path, _entries, JsonOptions);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

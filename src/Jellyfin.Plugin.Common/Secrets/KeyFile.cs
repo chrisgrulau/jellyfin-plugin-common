@@ -1,9 +1,8 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
-using System.Text.Json;
 using System.Threading;
+using Jellyfin.Plugin.Common.Storage;
 
 namespace Jellyfin.Plugin.Common.Secrets;
 
@@ -127,85 +126,25 @@ internal sealed class KeyFile
 
     private Dictionary<string, string> Load()
     {
-        try
-        {
-            if (File.Exists(_path) && JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(_path)) is { } keys)
-            {
-                Problem = null;
-                return new Dictionary<string, string>(keys.Where(k => IsKnown(k.Key) && IsWellFormed(k.Value)), StringComparer.Ordinal);
-            }
-        }
-        catch (JsonException)
-        {
-            // A damaged key file means the keys have to be entered again; nothing else depends on it
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        var read = JsonFile.Read<Dictionary<string, string>>(_path);
+        if (read.State == JsonFileState.Unreadable)
         {
             // Unreadable (permissions changed, locked): report it and carry on without keys; never throw to the pages
             Problem = "The saved keys can't be read by the account Jellyfin runs as. Enter them again to replace the file.";
             return new Dictionary<string, string>(StringComparer.Ordinal);
         }
 
+        // A damaged key file means the keys have to be entered again; nothing else depends on it
         Problem = null;
-        return new Dictionary<string, string>(StringComparer.Ordinal);
+        return read.Value is { } keys
+            ? new Dictionary<string, string>(keys.Where(k => IsKnown(k.Key) && IsWellFormed(k.Value)), StringComparer.Ordinal)
+            : new Dictionary<string, string>(StringComparer.Ordinal);
     }
 
     private void Save(Dictionary<string, string> keys)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-        var temp = _path + ".tmp";
-
-        // Create the file owner-only before anything is written to it
-        var options = new FileStreamOptions { Mode = FileMode.Create, Access = FileAccess.Write, Share = FileShare.None };
-        if (!OperatingSystem.IsWindows())
-        {
-            options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
-        }
-
-        using (var stream = new FileStream(temp, options))
-        {
-            if (OperatingSystem.IsWindows())
-            {
-                // Before anything is written: folders under ProgramData are readable by every local user by default
-                WindowsOwnerOnly(new FileInfo(temp));
-            }
-
-            JsonSerializer.Serialize(stream, keys);
-        }
-
-        try
-        {
-            File.Move(temp, _path, overwrite: true);
-        }
-        catch (UnauthorizedAccessException)
-        {
-            // A file this account can't overwrite (left by another account): remove it where the folder allows, then move
-            File.Delete(_path);
-            File.Move(temp, _path, overwrite: true);
-        }
-
+        // Created owner-only before anything is written to it; a file left by another account is replaced
+        JsonFile.WriteAtomic(_path, keys, ownerOnly: true);
         Problem = null;
-    }
-
-    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
-    private static void WindowsOwnerOnly(FileInfo file)
-    {
-        var security = new System.Security.AccessControl.FileSecurity();
-        security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
-        var owner = System.Security.Principal.WindowsIdentity.GetCurrent().User;
-        foreach (var who in new System.Security.Principal.IdentityReference?[]
-        {
-            owner,
-            new System.Security.Principal.SecurityIdentifier(System.Security.Principal.WellKnownSidType.LocalSystemSid, null),
-            new System.Security.Principal.SecurityIdentifier(System.Security.Principal.WellKnownSidType.BuiltinAdministratorsSid, null),
-        })
-        {
-            if (who is not null)
-            {
-                security.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(who, System.Security.AccessControl.FileSystemRights.FullControl, System.Security.AccessControl.AccessControlType.Allow));
-            }
-        }
-
-        file.SetAccessControl(security);
     }
 }
