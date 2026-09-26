@@ -1,8 +1,10 @@
 using System;
 using System.Globalization;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.Sockets;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Jellyfin.Plugin.Common.Resilience;
@@ -13,6 +15,18 @@ namespace Jellyfin.Plugin.Common.Resilience;
 /// </summary>
 internal static class HttpFailure
 {
+    /// <summary>The longest wait read from a response; anything longer (or absurd) is treated as this.</summary>
+    public static readonly TimeSpan MaxWait = TimeSpan.FromDays(31);
+
+    // Provider-specific ways of saying the account's quota, credit or billing limit is used up. Matched as phrases, not
+    // single words, so an ordinary rejected request ("insufficient audio", "credits" in a title) isn't mistaken for one
+    private static readonly string[] LimitPhrases =
+    [
+        "insufficient_quota", "exceeded your current quota", "quota_exceeded", "quota exceeded", "billing_hard_limit_reached",
+        "billing_not_active", "credit balance is too low", "insufficient credit", "insufficient_credit", "insufficient funds",
+        "insufficient_funds", "out of credits", "payment required", "payment_required", "resource_exhausted",
+    ];
+
     /// <summary>
     /// Classifies an HTTP response status.
     /// </summary>
@@ -21,10 +35,7 @@ internal static class HttpFailure
     /// <returns>The class.</returns>
     public static FailureClass Classify(HttpStatusCode status, string? body = null)
     {
-        var quota = body is not null && (body.Contains("quota", StringComparison.OrdinalIgnoreCase)
-            || body.Contains("insufficient", StringComparison.OrdinalIgnoreCase)
-            || body.Contains("credit", StringComparison.OrdinalIgnoreCase)
-            || body.Contains("billing", StringComparison.OrdinalIgnoreCase));
+        var quota = body is not null && LimitPhrases.Any(p => body.Contains(p, StringComparison.OrdinalIgnoreCase));
         return (int)status switch
         {
             401 => FailureClass.Authentication,
@@ -40,13 +51,22 @@ internal static class HttpFailure
     }
 
     /// <summary>
-    /// Classifies an exception thrown while calling a service.
+    /// Classifies an exception thrown while calling a service. A cancellation the caller asked for (shutdown) isn't a
+    /// failure of the service: pass the caller's token, and it is rethrown as <see cref="OperationCanceledException"/>
+    /// instead of being classed as <see cref="FailureClass.Transient"/>.
     /// </summary>
     /// <param name="exception">The exception.</param>
+    /// <param name="cancellationToken">The caller's own token.</param>
     /// <returns>The class.</returns>
-    public static FailureClass Classify(Exception exception)
+    /// <exception cref="OperationCanceledException">The caller's token was cancelled.</exception>
+    public static FailureClass Classify(Exception exception, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(exception);
+        if (exception is OperationCanceledException && cancellationToken.IsCancellationRequested)
+        {
+            throw new OperationCanceledException("Cancelled by the caller.", exception, cancellationToken);
+        }
+
         return exception switch
         {
             HttpRequestException { StatusCode: { } status } => Classify(status),
@@ -72,13 +92,13 @@ internal static class HttpFailure
         }
 
         var v = value.Trim();
-        if (double.TryParse(v, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var seconds) && seconds >= 0 && seconds < 1e9)
+        if (double.TryParse(v, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var seconds))
         {
-            return TimeSpan.FromSeconds(seconds);
+            return Seconds(seconds);
         }
 
         return DateTimeOffset.TryParse(v, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var when) && when > now
-            ? when - now
+            ? Bound(when - now)
             : null;
     }
 
@@ -95,12 +115,12 @@ internal static class HttpFailure
         {
             if (ra.Delta is { } delta)
             {
-                return delta;
+                return Bound(delta);
             }
 
             if (ra.Date is { } date && date > now)
             {
-                return date - now;
+                return Bound(date - now);
             }
         }
 
@@ -110,9 +130,9 @@ internal static class HttpFailure
             {
                 foreach (var v in values)
                 {
-                    if (name == "retry-after-ms" && double.TryParse(v, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var ms) && ms >= 0)
+                    if (name == "retry-after-ms" && double.TryParse(v, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var ms))
                     {
-                        return TimeSpan.FromMilliseconds(ms);
+                        return Seconds(ms / 1000);
                     }
 
                     if (RetryAfter(v, now) is { } t)
@@ -132,9 +152,16 @@ internal static class HttpFailure
         return null;
     }
 
+    // A number of seconds as a wait: negative or not a number is unreadable; anything over MaxWait is MaxWait
+    private static TimeSpan? Seconds(double seconds)
+        => double.IsNaN(seconds) || seconds < 0 ? null : seconds >= MaxWait.TotalSeconds ? MaxWait : TimeSpan.FromSeconds(seconds);
+
+    private static TimeSpan Bound(TimeSpan wait) => wait > MaxWait ? MaxWait : wait;
+
     private static TimeSpan? Duration(string value)
     {
-        var total = TimeSpan.Zero;
+        // Summed in seconds (a double), converted once and bounded, so absurd values can't overflow
+        var total = 0.0;
         var number = string.Empty;
         var any = false;
         for (var i = 0; i < value.Length; i++)
@@ -153,28 +180,24 @@ internal static class HttpFailure
 
             if (c == 'm' && i + 1 < value.Length && value[i + 1] == 's')
             {
-                total += TimeSpan.FromMilliseconds(n);
+                total += n / 1000;
                 i++;
             }
             else
             {
-                total += c switch
-                {
-                    'h' => TimeSpan.FromHours(n),
-                    'm' => TimeSpan.FromMinutes(n),
-                    's' => TimeSpan.FromSeconds(n),
-                    _ => TimeSpan.MinValue,
-                };
-                if (total < TimeSpan.Zero)
+                var unit = c switch { 'h' => 3600.0, 'm' => 60.0, 's' => 1.0, _ => double.NaN };
+                if (double.IsNaN(unit))
                 {
                     return null;
                 }
+
+                total += n * unit;
             }
 
             number = string.Empty;
             any = true;
         }
 
-        return any && number.Length == 0 ? total : null;
+        return any && number.Length == 0 ? Seconds(total) : null;
     }
 }

@@ -11,6 +11,20 @@ All notable changes to this project are documented here. The format follows
 - Failure classes (no connection, transient, provider limit, authentication, bad request) and their back-off schedule.
 
 ### Fixed
+- `HttpFailure` (COM-03):
+  - Every wait read from a response is bounded to 31 days before it is converted, so absurd `retry-after-ms` or
+    duration values can't overflow.
+  - A provider limit is recognised by the providers' own wording (`insufficient_quota`, `billing_hard_limit_reached`,
+    "credit balance is too low", `RESOURCE_EXHAUSTED` …), not bare words like "insufficient" or "credit", so an
+    ordinary rejected request doesn't pause a provider.
+  - `Classify(exception, token)` rethrows a cancellation the caller asked for, instead of classing it as a transient
+    failure.
+- Secrets (COM-04):
+  - `Redaction.Redact` removes secrets before cutting the text, so a key straddling the cut can't leave a piece behind.
+  - On Windows the key file gets an owner-only access list (the server's account, SYSTEM, Administrators) instead of
+    inheriting the folder's.
+- `NetworkAddress.IsLocal` (COM-05): one definition of "this machine or the local network" for every plugin (loopback,
+  private, link-local and unique-local addresses, IPv4-mapped IPv6, `localhost`, `.local`).
 - A retry delay stated by a provider is kept between 1 second and 31 days, so a buggy or hostile `Retry-After` (or a
   reset time years away) can't park a queue indefinitely or overflow date arithmetic. Up to 10 % is added (never
   less than the provider asked for), so everything waiting on the same reset doesn't retry at the same instant. A NaN

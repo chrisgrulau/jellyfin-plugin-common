@@ -15,6 +15,9 @@ internal static partial class Redaction
     /// <summary>The longest text kept (error bodies can be large); the rest is cut.</summary>
     public const int MaxLength = 2000;
 
+    // How much of a very long text is scanned before cutting to MaxLength
+    private const int MaxScanned = 64 * 1024;
+
     /// <summary>
     /// Removes every known key (and any 8-character or longer piece of one), bearer tokens and common key patterns, and
     /// cuts the text to <see cref="MaxLength"/>.
@@ -30,7 +33,9 @@ internal static partial class Redaction
             return string.Empty;
         }
 
-        var s = text.Length > MaxLength ? text[..MaxLength] + "…" : text;
+        // Redacted first, then cut, so a key straddling the cut can't leave a piece too short to recognise. Very long text
+        // is first trimmed to a generous bound (far beyond what is kept) to keep the pattern matching cheap
+        var s = text.Length > MaxScanned ? text[..MaxScanned] : text;
         foreach (var secret in secrets)
         {
             if (string.IsNullOrEmpty(secret) || secret.Length < 8)
@@ -48,7 +53,8 @@ internal static partial class Redaction
         }
 
         s = Bearer().Replace(s, "$1" + Mask);
-        return KeyLike().Replace(s, Mask);
+        s = KeyLike().Replace(s, Mask);
+        return s.Length > MaxLength ? s[..MaxLength] + "…" : s;
     }
 
     [GeneratedRegex(@"((?:Bearer|Token|Basic)\s+)[A-Za-z0-9._~+/=-]{8,}", RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 1000)]
