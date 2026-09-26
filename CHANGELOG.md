@@ -5,6 +5,22 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **FAM-02:** the entry-point clients (`AiBridgeClient`, `SpeechBridgeClient`) send letters in every script as they
+  are, not as `\uXXXX` escapes. Before, non-English text was six times its size, was often refused as too large, and
+  reached the model escaped.
+  - `<`, `>` and `&` are still escaped, so text can't close a block such as `</data>`.
+  - `BridgeJson.Bytes` measures data as the AI plugin does (UTF-8 bytes), and `AiBridgeClient.MaxDataBytes` is the
+    limit, so callers can shrink what they send to fit.
+- **COM-06:** a key file this account can't read no longer makes the settings pages fail with errors.
+  - `KeyFile.Status` and `Get` answer as if no key were set, and `Problem` says why.
+  - Saving a key replaces a file that can't be overwritten, where the folder allows.
+- **COM-07:** a spend ledger that can't be read at the moment (locked by a backup or antivirus, a share hiccup)
+  refuses that one paid call and is read again next time.
+  - It is no longer moved aside and blocked for the rest of the month.
+  - A damaged (unparseable) ledger is still set aside and blocks paid use.
+
 ### Added
 - `SpeechBridgeClient`: asks the family's Subtitles plugin, if installed, to transcribe a short stretch of a video
   (at most 180 seconds) through its in-process entry point, the same way as `AiBridgeClient`.

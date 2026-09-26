@@ -73,7 +73,7 @@ internal static class SpeechBridgeClient
             start = Math.Max(0, start.TotalSeconds),
             length = Math.Clamp(length.TotalSeconds, 0, MaxSeconds),
             language,
-        });
+        }, BridgeJson.Options);
         string reply;
         try
         {
