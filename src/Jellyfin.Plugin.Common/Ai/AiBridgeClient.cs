@@ -37,6 +37,12 @@ internal static class AiBridgeClient
     /// <summary>The longest a reply may be.</summary>
     public const int MaxReply = 256 * 1024;
 
+    /// <summary>
+    /// The largest <c>data</c> the AI plugin accepts, in UTF-8 bytes of its JSON (see <see cref="BridgeJson.Bytes"/>).
+    /// Callers with a lot to send shrink it to fit (the least useful items first) rather than being refused.
+    /// </summary>
+    public const int MaxDataBytes = 64 * 1024;
+
     /// <summary>Gets or sets a stand-in for the entry point (tests only).</summary>
     internal static Func<string, CancellationToken, Task<string>>? Override { get; set; }
 
@@ -60,7 +66,7 @@ internal static class AiBridgeClient
             return new AiReply(false, null, null, "The AI plugin isn't installed.", "not-installed");
         }
 
-        var request = JsonSerializer.Serialize(new { version = Version, caller, purpose, instructions, data, schema, maxOutputTokens, effort });
+        var request = JsonSerializer.Serialize(new { version = Version, caller, purpose, instructions, data, schema, maxOutputTokens, effort }, BridgeJson.Options);
         string reply;
         try
         {

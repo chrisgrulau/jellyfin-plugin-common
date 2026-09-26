@@ -107,6 +107,11 @@ internal sealed class SpendLedger
             }
 
             var entries = Load().Where(e => MonthOf(e.Time) == month).ToList();
+            if (entries.Any(e => e.Purpose == UnreadablePurpose))
+            {
+                return new SpendDecision(null, "The spending record can't be read right now (another program may have it open), so paid services wait; it's tried again next time.");
+            }
+
             decimal spentAll = 0, spentProvider = 0;
             foreach (var e in entries)
             {
@@ -248,6 +253,8 @@ internal sealed class SpendLedger
 
     private static string Show(decimal amount, SpendLimits limits) => new Money(decimal.Round(amount, 2), limits.Currency).ToString();
 
+    private const string UnreadablePurpose = "unreadable";
+
     private List<SpendEntry> Load()
     {
         if (_entries is not null)
@@ -259,9 +266,16 @@ internal sealed class SpendLedger
         {
             _entries = File.Exists(_path) ? JsonSerializer.Deserialize<List<SpendEntry>>(File.ReadAllText(_path), JsonOptions) : null;
         }
-        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            // Keep the damaged file for inspection and refuse to guess: an unreadable ledger blocks paid calls
+            // Unreadable for now (locked by a backup or antivirus, a share hiccup): refuse paid calls this time, leave the
+            // file where it is, and read it again next time. Nothing is cached, so nothing can be saved over it.
+            _entries = null;
+            return [Unreadable(_clock.GetLocalNow())];
+        }
+        catch (JsonException)
+        {
+            // Damaged: keep the file for inspection and refuse to guess; a damaged ledger blocks paid calls this month
             _entries = null;
             try
             {
@@ -285,6 +299,10 @@ internal sealed class SpendLedger
         return _entries;
     }
 
+    // The ledger can't be read at the moment: an entry that refuses this call, never saved
+    private static SpendEntry Unreadable(DateTimeOffset now)
+        => new() { Id = Guid.NewGuid(), Provider = "(ledger can't be read)", Purpose = UnreadablePurpose, Amount = new Money(decimal.MaxValue / 2, "XXX"), Time = now, Settled = true };
+
     // A damaged ledger means this month's spending is unknown; an unconvertible marker makes every check refuse until
     // the month ends, rather than letting spending start again from zero
     private static SpendEntry Blocker(DateTimeOffset now)
@@ -292,6 +310,11 @@ internal sealed class SpendLedger
 
     private void Save()
     {
+        if (_entries is null)
+        {
+            return;
+        }
+
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(_path)!);

@@ -64,6 +64,12 @@ internal sealed class KeyFile
     }
 
     /// <summary>
+    /// Gets why the keys can't be read, if the last read failed (the file exists but this account can't open it, for
+    /// example after the service account or user id changed). Saving a key again replaces the file.
+    /// </summary>
+    public string? Problem { get; private set; }
+
+    /// <summary>
     /// Stores (or replaces) a provider's key.
     /// </summary>
     /// <param name="provider">An allowed provider id.</param>
@@ -125,6 +131,7 @@ internal sealed class KeyFile
         {
             if (File.Exists(_path) && JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(_path)) is { } keys)
             {
+                Problem = null;
                 return new Dictionary<string, string>(keys.Where(k => IsKnown(k.Key) && IsWellFormed(k.Value)), StringComparer.Ordinal);
             }
         }
@@ -132,7 +139,14 @@ internal sealed class KeyFile
         {
             // A damaged key file means the keys have to be entered again; nothing else depends on it
         }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Unreadable (permissions changed, locked): report it and carry on without keys; never throw to the pages
+            Problem = "The saved keys can't be read by the account Jellyfin runs as. Enter them again to replace the file.";
+            return new Dictionary<string, string>(StringComparer.Ordinal);
+        }
 
+        Problem = null;
         return new Dictionary<string, string>(StringComparer.Ordinal);
     }
 
@@ -159,7 +173,18 @@ internal sealed class KeyFile
             JsonSerializer.Serialize(stream, keys);
         }
 
-        File.Move(temp, _path, overwrite: true);
+        try
+        {
+            File.Move(temp, _path, overwrite: true);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // A file this account can't overwrite (left by another account): remove it where the folder allows, then move
+            File.Delete(_path);
+            File.Move(temp, _path, overwrite: true);
+        }
+
+        Problem = null;
     }
 
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
