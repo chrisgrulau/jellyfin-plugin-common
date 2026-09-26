@@ -105,10 +105,11 @@ public sealed class SecretsAndHttpTests : IDisposable
     [Fact]
     public void No_network_is_told_apart_from_a_failing_service()
     {
-        Assert.Equal(FailureClass.NoConnection, HttpFailure.Classify(new HttpRequestException("dns", new SocketException((int)SocketError.HostNotFound))));
-        Assert.Equal(FailureClass.Transient, HttpFailure.Classify(new HttpRequestException("reset", new SocketException((int)SocketError.ConnectionReset))));
-        Assert.Equal(FailureClass.Authentication, HttpFailure.Classify(new HttpRequestException("no", null, HttpStatusCode.Unauthorized)));
-        Assert.Equal(FailureClass.Transient, HttpFailure.Classify(new TimeoutException()));
+        var ct = TestContext.Current.CancellationToken;
+        Assert.Equal(FailureClass.NoConnection, HttpFailure.Classify(new HttpRequestException("dns", new SocketException((int)SocketError.HostNotFound)), ct));
+        Assert.Equal(FailureClass.Transient, HttpFailure.Classify(new HttpRequestException("reset", new SocketException((int)SocketError.ConnectionReset)), ct));
+        Assert.Equal(FailureClass.Authentication, HttpFailure.Classify(new HttpRequestException("no", null, HttpStatusCode.Unauthorized), ct));
+        Assert.Equal(FailureClass.Transient, HttpFailure.Classify(new TimeoutException(), ct));
     }
 
     [Fact]

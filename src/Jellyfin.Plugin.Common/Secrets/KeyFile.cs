@@ -8,7 +8,8 @@ using System.Threading;
 namespace Jellyfin.Plugin.Common.Secrets;
 
 /// <summary>
-/// Keeps API keys in a file only the server's own account can read (mode 0600 on Linux and macOS), separate from the
+/// Keeps API keys in a file only the server's own account can read (mode 0600 on Linux and macOS; on Windows an access
+/// list granting only that account, SYSTEM and Administrators, not inherited from the folder), separate from the
 /// plugin configuration, so they are never sent back to a settings page, included in a configuration export, or logged.
 /// Callers can only ask whether a key is set, replace it or clear it; the key itself is read only to make a call.
 /// </summary>
@@ -149,9 +150,37 @@ internal sealed class KeyFile
 
         using (var stream = new FileStream(temp, options))
         {
+            if (OperatingSystem.IsWindows())
+            {
+                // Before anything is written: folders under ProgramData are readable by every local user by default
+                WindowsOwnerOnly(new FileInfo(temp));
+            }
+
             JsonSerializer.Serialize(stream, keys);
         }
 
         File.Move(temp, _path, overwrite: true);
+    }
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static void WindowsOwnerOnly(FileInfo file)
+    {
+        var security = new System.Security.AccessControl.FileSecurity();
+        security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+        var owner = System.Security.Principal.WindowsIdentity.GetCurrent().User;
+        foreach (var who in new System.Security.Principal.IdentityReference?[]
+        {
+            owner,
+            new System.Security.Principal.SecurityIdentifier(System.Security.Principal.WellKnownSidType.LocalSystemSid, null),
+            new System.Security.Principal.SecurityIdentifier(System.Security.Principal.WellKnownSidType.BuiltinAdministratorsSid, null),
+        })
+        {
+            if (who is not null)
+            {
+                security.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(who, System.Security.AccessControl.FileSystemRights.FullControl, System.Security.AccessControl.AccessControlType.Allow));
+            }
+        }
+
+        file.SetAccessControl(security);
     }
 }
