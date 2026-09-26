@@ -175,6 +175,69 @@ public sealed class SharedBlocksTests : IDisposable
         Assert.DoesNotContain(Key, ex.Message, StringComparison.Ordinal);
         Assert.DoesNotContain(Key[..12], ex.Message, StringComparison.Ordinal);
         Assert.False(ex.Charged);
+        Assert.True(ex.RateLimited);
+        Assert.StartsWith("slow down, ", ex.Detail, StringComparison.Ordinal);
+        Assert.DoesNotContain(Key[..12], ex.Detail, StringComparison.Ordinal);
+    }
+
+    // FAM-06 follow-up: the provider's reply as a detail a plugin can word its own message around
+    [Fact]
+    public async Task An_error_carries_the_providers_reply_as_a_redacted_detail()
+    {
+        using var http = new HttpClient(new Reply(_ => Text(HttpStatusCode.BadRequest, "  {\"error\":\"bad file\",\"key\":\"" + Key + "\"}\n")));
+        using var request = new HttpRequestMessage(HttpMethod.Get, "https://provider.example/v1");
+
+        var ex = await Assert.ThrowsAsync<ProviderException>(() => ProviderHttp.SendAsync(http, request, 1024, [Key], TestContext.Current.CancellationToken));
+
+        Assert.NotNull(ex.Detail);
+        Assert.StartsWith("{\"error\":\"bad file\"", ex.Detail, StringComparison.Ordinal);
+        Assert.DoesNotContain(Key[..12], ex.Detail, StringComparison.Ordinal);
+        Assert.DoesNotContain("provider.example", ex.Detail, StringComparison.Ordinal);
+        Assert.StartsWith("provider.example answered HTTP 400: ", ex.Message, StringComparison.Ordinal);
+        Assert.Contains(ex.Detail, ex.Message, StringComparison.Ordinal);
+        Assert.False(ex.RateLimited);
+    }
+
+    [Fact]
+    public async Task A_long_or_empty_error_reply_gives_a_short_or_no_detail()
+    {
+        using var longReply = new HttpClient(new Reply(_ => Text(HttpStatusCode.InternalServerError, string.Concat(Enumerable.Repeat("error ", 250)))));
+        using var one = new HttpRequestMessage(HttpMethod.Get, "https://provider.example/v1");
+        var ex = await Assert.ThrowsAsync<ProviderException>(() => ProviderHttp.SendAsync(longReply, one, 4096, [Key], TestContext.Current.CancellationToken));
+        Assert.True(ex.Detail!.Length <= ProviderHttp.DetailMaxLength + 1, "detail " + ex.Detail.Length);
+        Assert.StartsWith("error error", ex.Detail, StringComparison.Ordinal);
+        Assert.EndsWith("…", ex.Detail, StringComparison.Ordinal);
+        Assert.Contains(string.Concat(Enumerable.Repeat("error ", 250)).Trim(), ex.Message, StringComparison.Ordinal);
+
+        using var empty = new HttpClient(new Reply(_ => Text(HttpStatusCode.BadGateway, "   ")));
+        using var two = new HttpRequestMessage(HttpMethod.Get, "https://provider.example/v1");
+        Assert.Null((await Assert.ThrowsAsync<ProviderException>(() => ProviderHttp.SendAsync(empty, two, 1024, [Key], TestContext.Current.CancellationToken))).Detail);
+
+        // A surrogate pair at the cut is dropped whole, never split
+        var emoji = new string('a', ProviderHttp.DetailMaxLength - 1) + "\U0001F600" + "tail";
+        var cut = ProviderHttp.DetailOf(emoji)!;
+        Assert.False(char.IsHighSurrogate(cut[^2]));
+        Assert.Equal(new string('a', ProviderHttp.DetailMaxLength - 1) + "…", cut);
+    }
+
+    [Fact]
+    public async Task A_429_with_a_long_wait_is_a_provider_limit_and_any_429_is_rate_limited()
+    {
+        using var http = new HttpClient(new Reply(_ =>
+        {
+            var r = Text(HttpStatusCode.TooManyRequests, "too many requests");
+            r.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromHours(6));
+            return r;
+        }));
+        using var request = new HttpRequestMessage(HttpMethod.Get, "https://provider.example/v1");
+
+        var ex = await Assert.ThrowsAsync<ProviderException>(() => ProviderHttp.SendAsync(http, request, 1024, [Key], TestContext.Current.CancellationToken));
+
+        Assert.Equal(FailureClass.ProviderLimit, ex.Failure);
+        Assert.Equal(TimeSpan.FromHours(6), ex.RetryAfter);
+        Assert.True(ex.RateLimited);
+        Assert.True(HttpFailure.IsRateLimited(ex));
+        Assert.Equal("too many requests", ex.Detail);
     }
 
     [Theory]

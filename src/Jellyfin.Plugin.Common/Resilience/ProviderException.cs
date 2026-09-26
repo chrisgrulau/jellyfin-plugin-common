@@ -48,6 +48,19 @@ internal class ProviderException : Exception
     public HttpStatusCode? StatusCode { get; init; }
 
     /// <summary>
+    /// Gets a value indicating whether the provider answered HTTP 429 (too many requests). This holds for a short rate
+    /// limit (<see cref="FailureClass.Transient"/>) as well as a used-up allowance (<see cref="FailureClass.ProviderLimit"/>),
+    /// for callers that stop asking the provider on any 429.
+    /// </summary>
+    public bool RateLimited => StatusCode == HttpStatusCode.TooManyRequests;
+
+    /// <summary>
+    /// Gets what the provider said in its error reply, keys removed and cut short, or <c>null</c> if it said nothing.
+    /// A plugin can word its own message around it ("the provider said: …") instead of showing <see cref="Exception.Message"/>.
+    /// </summary>
+    public string? Detail { get; init; }
+
+    /// <summary>
     /// Gets a value indicating whether the provider billed the call even so (it answered, but the answer was a refusal,
     /// was cut off or couldn't be read). A metered call then records the usage below instead of releasing its reservation.
     /// </summary>

@@ -18,6 +18,13 @@ internal static class HttpFailure
     /// <summary>The longest wait read from a response; anything longer (or absurd) is treated as this.</summary>
     public static readonly TimeSpan MaxWait = TimeSpan.FromDays(31);
 
+    /// <summary>
+    /// The longest wait an HTTP 429 may ask for and still count as a short rate limit. Per-second and per-minute windows
+    /// reset within a minute; a provider asking for longer is pointing at an hourly, daily or monthly allowance, so the
+    /// 429 is a <see cref="FailureClass.ProviderLimit"/>.
+    /// </summary>
+    public static readonly TimeSpan RateLimitWindow = TimeSpan.FromSeconds(60);
+
     // Provider-specific ways of saying the account's quota, credit or billing limit is used up. Matched as phrases, not
     // single words, so an ordinary rejected request ("insufficient audio", "credits" in a title) isn't mistaken for one
     private static readonly string[] LimitPhrases =
@@ -28,12 +35,16 @@ internal static class HttpFailure
     ];
 
     /// <summary>
-    /// Classifies an HTTP response status.
+    /// Classifies an HTTP response status. An HTTP 429 (too many requests) is a <see cref="FailureClass.ProviderLimit"/>
+    /// when the provider says its allowance is used up: quota or billing wording in the body, or a wait longer than
+    /// <see cref="RateLimitWindow"/>. Otherwise (a short wait, or none stated) it is <see cref="FailureClass.Transient"/>.
+    /// A caller that stops asking a provider on any 429 checks <see cref="IsRateLimited"/> instead.
     /// </summary>
     /// <param name="status">The status code.</param>
     /// <param name="body">The response body, if read (some providers report an exhausted quota as 400 or 403).</param>
+    /// <param name="retryAfter">The wait the provider asked for, if any (see <see cref="RetryAfter(HttpResponseMessage, DateTimeOffset)"/>).</param>
     /// <returns>The class.</returns>
-    public static FailureClass Classify(HttpStatusCode status, string? body = null)
+    public static FailureClass Classify(HttpStatusCode status, string? body = null, TimeSpan? retryAfter = null)
     {
         var quota = body is not null && LimitPhrases.Any(p => body.Contains(p, StringComparison.OrdinalIgnoreCase));
         return (int)status switch
@@ -42,7 +53,7 @@ internal static class HttpFailure
             402 => FailureClass.ProviderLimit,
             403 => quota ? FailureClass.ProviderLimit : FailureClass.Authentication,
             408 or 409 or 425 => FailureClass.Transient,
-            429 => quota ? FailureClass.ProviderLimit : FailureClass.Transient,
+            429 => quota || retryAfter > RateLimitWindow ? FailureClass.ProviderLimit : FailureClass.Transient,
             >= 500 and <= 599 => FailureClass.Transient,
             400 when quota => FailureClass.ProviderLimit,
             >= 400 and <= 499 => FailureClass.BadRequest,
@@ -69,6 +80,8 @@ internal static class HttpFailure
 
         return exception switch
         {
+            // Already classified (by ProviderHttp or a plugin): keep its class
+            ProviderException p => p.Failure,
             HttpRequestException { StatusCode: { } status } => Classify(status),
             HttpRequestException { InnerException: SocketException s } when s.SocketErrorCode is SocketError.HostNotFound or SocketError.NetworkUnreachable or SocketError.HostUnreachable or SocketError.NetworkDown or SocketError.TryAgain
                 => FailureClass.NoConnection,
@@ -77,6 +90,20 @@ internal static class HttpFailure
             _ => FailureClass.Transient,
         };
     }
+
+    /// <summary>
+    /// Tells whether a failure was an HTTP 429 (too many requests), whatever its class: for callers that stop asking a
+    /// provider for the rest of a run on any rate limit, short or long.
+    /// </summary>
+    /// <param name="exception">The failure.</param>
+    /// <returns><c>true</c> for a <see cref="ProviderException"/> or <see cref="HttpRequestException"/> with status 429.</returns>
+    public static bool IsRateLimited(Exception? exception)
+        => exception switch
+        {
+            ProviderException p => p.RateLimited,
+            HttpRequestException { StatusCode: HttpStatusCode.TooManyRequests } => true,
+            _ => false,
+        };
 
     /// <summary>
     /// Reads a <c>Retry-After</c> value: seconds, or an HTTP date.
