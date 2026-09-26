@@ -48,10 +48,33 @@ time, and whether it has been settled.
   the overall and per-provider limits, and records a reservation, all under one lock.
 - **After a call:** `Settle` replaces the estimate with the actual cost, or `Release` drops it if nothing was charged.
 - **Interrupted calls:** a reservation that is never settled keeps counting at its estimate.
-- **Storage:** the file is replaced atomically on every change. A damaged file is set aside, and paid use stops until
-  the month ends.
+- **Storage:** the file is replaced atomically on every change (`JsonFile`). A damaged file is set aside, and paid use
+  stops until the month ends. A file that can't be read right now (locked, a share hiccup) refuses that one call and is
+  read again next time; it is neither moved nor overwritten.
 - **Ownership:** while each plugin owns its own budget, each keeps its own ledger. Once the AI plugin owns shared
   budgets, it keeps this ledger for all of them.
+
+### Metered calls
+
+`MeteredCall.RunAsync` is the one place a paid call is run:
+- It reserves the estimate first; if the limits refuse, the call isn't made and the refusal is thrown (by default a
+  `ProviderException` of class *provider limit*).
+- A successful call is settled at its actual cost, from its result (or the estimate if that can't be worked out).
+- A call that failed but was billed anyway (a refusal, a cut-off or unreadable answer) is settled at what it used: by
+  default a `ProviderException` with `Charged` set, at its `ChargedCost` or else the estimate.
+- A failure that certainly wasn't billed (a provider refusal, no answer, or a cancellation) releases the reservation.
+- An unexpected failure is recorded at the estimate, since it may have been billed.
+
+A plugin whose exception type is public (so it can't derive from the internal `ProviderException`) passes its own
+`MeteredCallOptions` (`IsCharged`, `ChargedCost`, `Refuse`).
+
+### Spending store
+
+`SpendingStore` keeps what a plugin needs for spending in its data folder: the ledger (`spend.json`), the exchange
+rates (`rates.json`) and the shipped price table (`ShippedPrices`). `CurrentRatesAsync` refreshes the rates when due
+(about daily; at most every 30 minutes while they are missing or stale), so calling it before each reservation keeps
+them current without asking an unreachable source on every call. `Currencies` is the list a settings page offers. Each
+plugin still decides its own limits from its own settings.
 
 ## Currencies
 
@@ -70,6 +93,8 @@ currency. So:
 - An optional **extra percentage** is added to every converted cost, for taxes charged on overseas services (such as
   GST) or a card's foreign-transaction fee. It defaults to 0.
 - When a budget is shared across plugins, its owner (see *Budgets*) also owns its currency.
+- A currency setting is read with `CurrencyCode.NormaliseOr(code, "USD")`: only a supported code passes; anything else
+  is the fallback.
 
 ## Keys and errors
 
@@ -77,3 +102,26 @@ API keys live in an owner-only file per plugin (`KeyFile`), never in the plugin 
 only report whether a key is set, replace it or clear it. Anything from a provider that is logged or shown goes through
 `Redaction` first. `HttpFailure` turns a failed call into a failure class, reading the provider's own wait time where it
 gives one; `BackoffSchedule` then bounds and spreads it.
+
+`ProviderHttp.SendAsync` (text) and `SendForBytesAsync` (downloads) send a provider request in one place:
+- A failure is thrown as a `ProviderException` with its failure class, the HTTP status and the provider's wait
+  (`Retry-After` and the common rate-limit headers). The caller's own cancellation is rethrown as a cancellation.
+- No body is read beyond the caller's limit: a reply over it is refused (class *bad request*); an error body is read
+  only up to it, which is enough to classify and show it.
+- Every message has the caller's keys removed.
+
+## Stores
+
+Every JSON store goes through `JsonFile`, and states its own policy for each outcome of `Read`:
+
+| State | Meaning | Policy of the stores here |
+|---|---|---|
+| Missing | Nothing saved yet | Start empty. |
+| Loaded | Read and parsed | Use it. |
+| Damaged | Not valid JSON: it won't get better | Ledger: `SetAside` (`file.damaged-UNIXSECONDS`) and block paid use this month. Keys: enter them again. Rates: fetch again. |
+| Unreadable | Locked, a share hiccup, permissions: it may be fine | Never overwrite or set aside. Ledger: refuse this call, read again next time. Keys: report `Problem`. Rates: fetch again. |
+
+`WriteAtomic` writes a temporary file in the same folder, flushes it to disk and renames it over the old one. With
+`ownerOnly` (the key file) the temporary file is created mode 0600 on Linux and macOS, or with an access list for only
+the server's account, SYSTEM and Administrators on Windows, before anything is written; a file left by another account
+is replaced where the folder allows.

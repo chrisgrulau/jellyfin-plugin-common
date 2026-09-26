@@ -36,4 +36,22 @@ internal static class CurrencyCode
     /// <returns><c>true</c> if supported.</returns>
     public static bool IsSupported(string? code)
         => Normalise(code) is { } c && ((IList<string>)Supported).Contains(c);
+
+    /// <summary>
+    /// A currency setting as a supported code, or the fallback: "the currency setting, or USD" in one place, so an
+    /// unsupported code never gets through.
+    /// </summary>
+    /// <param name="code">The setting, any case, surrounding spaces allowed.</param>
+    /// <param name="fallback">What to use when <paramref name="code"/> isn't supported; must itself be supported.</param>
+    /// <returns>The upper-case supported code.</returns>
+    /// <exception cref="ArgumentException"><paramref name="fallback"/> isn't a supported code.</exception>
+    public static string NormaliseOr(string? code, string fallback)
+    {
+        if (!IsSupported(fallback))
+        {
+            throw new ArgumentException("The fallback currency must be a supported code.", nameof(fallback));
+        }
+
+        return IsSupported(code) ? Normalise(code)! : Normalise(fallback)!;
+    }
 }

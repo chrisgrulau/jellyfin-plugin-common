@@ -3,9 +3,9 @@ using System.Collections.Generic;
 using System.IO;
 using System.Net.Http;
 using System.Text;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.Common.Storage;
 
 namespace Jellyfin.Plugin.Common.Costs;
 
@@ -130,26 +130,21 @@ internal sealed class ExchangeRateStore : IDisposable
         }
 
         _loaded = true;
-        try
-        {
-            if (File.Exists(_path) && JsonSerializer.Deserialize<Saved>(File.ReadAllText(_path)) is { Rates: { Count: > 0 } perEuro } saved
-                && DateOnly.TryParseExact(saved.Date, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var date))
-            {
-                var valid = new Dictionary<string, decimal>(StringComparer.Ordinal);
-                foreach (var (code, rate) in perEuro)
-                {
-                    if (CurrencyCode.Normalise(code) is { } c && rate > 0 && rate < 1_000_000m)
-                    {
-                        valid[c] = rate;
-                    }
-                }
 
-                _rates = new ExchangeRates(date, saved.Source ?? EcbRates.SourceName, valid);
-            }
-        }
-        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+        // Missing, damaged or unreadable all mean no saved rates: they are fetched again (and a good fetch replaces the file)
+        if (JsonFile.Read<Saved>(_path).Value is { Rates: { Count: > 0 } perEuro } saved
+            && DateOnly.TryParseExact(saved.Date, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var date))
         {
-            // No saved rates: fetched again
+            var valid = new Dictionary<string, decimal>(StringComparer.Ordinal);
+            foreach (var (code, rate) in perEuro)
+            {
+                if (CurrencyCode.Normalise(code) is { } c && rate > 0 && rate < 1_000_000m)
+                {
+                    valid[c] = rate;
+                }
+            }
+
+            _rates = new ExchangeRates(date, saved.Source ?? EcbRates.SourceName, valid);
         }
     }
 
@@ -157,10 +152,8 @@ internal sealed class ExchangeRateStore : IDisposable
     {
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
             var saved = new Saved { Date = rates.Date.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture), Source = rates.Source, Rates = new Dictionary<string, decimal>(rates.PerEuro) };
-            File.WriteAllText(_path + ".tmp", JsonSerializer.Serialize(saved));
-            File.Move(_path + ".tmp", _path, overwrite: true);
+            JsonFile.WriteAtomic(_path, saved);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
