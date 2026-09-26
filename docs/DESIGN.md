@@ -109,6 +109,16 @@ gives one; `BackoffSchedule` then bounds and spreads it.
 - No body is read beyond the caller's limit: a reply over it is refused (class *bad request*); an error body is read
   only up to it, which is enough to classify and show it.
 - Every message has the caller's keys removed.
+- `Message` stays "*host* answered HTTP *status*: *body*". `Detail` holds the provider's own words alone (the error
+  body, keys removed, trimmed, at most 500 characters, `null` if empty), so a plugin can write "SubDL said: …".
+
+**HTTP 429.** A 429 is a *provider limit* when the provider says its allowance is used up: quota or billing wording in
+the body, or a wait (`Retry-After` or a rate-limit reset header) longer than 60 seconds (`HttpFailure.RateLimitWindow`),
+since per-second and per-minute windows reset within a minute. Otherwise, a short wait or none stated, it is
+*transient*, and the wait, if any, is in `RetryAfter`. A 429 with no wait stays transient: most throttling says nothing,
+and the back-off schedule handles it. A plugin that stops asking a provider for the rest of a run on any 429 checks
+`ProviderException.RateLimited` (or `HttpFailure.IsRateLimited(exception)`, which also takes an
+`HttpRequestException`) instead of deriving it from the status.
 
 ## Stores
 

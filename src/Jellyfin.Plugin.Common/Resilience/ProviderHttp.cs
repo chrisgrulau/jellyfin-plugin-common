@@ -18,6 +18,9 @@ namespace Jellyfin.Plugin.Common.Resilience;
 /// </summary>
 internal static class ProviderHttp
 {
+    /// <summary>The most characters of a provider's error reply kept in <see cref="ProviderException.Detail"/>.</summary>
+    public const int DetailMaxLength = 500;
+
     private const int ChunkBytes = 16 * 1024;
 
     /// <summary>
@@ -75,11 +78,14 @@ internal static class ProviderHttp
                 var (errorBytes, _) = await ReadAsync(response, maxBytes, host, keys, cancellationToken).ConfigureAwait(false);
                 var body = Encoding.UTF8.GetString(errorBytes);
                 var status = (int)response.StatusCode;
-                throw new ProviderException(string.Create(CultureInfo.InvariantCulture, $"{host} answered HTTP {status}: {Redaction.Redact(body, keys)}"))
+                var safe = Redaction.Redact(body, keys);
+                var wait = HttpFailure.RetryAfter(response, DateTimeOffset.UtcNow);
+                throw new ProviderException(string.Create(CultureInfo.InvariantCulture, $"{host} answered HTTP {status}: {safe}"))
                 {
-                    Failure = HttpFailure.Classify(response.StatusCode, body),
-                    RetryAfter = HttpFailure.RetryAfter(response, DateTimeOffset.UtcNow),
+                    Failure = HttpFailure.Classify(response.StatusCode, body, wait),
+                    RetryAfter = wait,
                     StatusCode = response.StatusCode,
+                    Detail = DetailOf(safe),
                 };
             }
 
@@ -91,6 +97,29 @@ internal static class ProviderHttp
             var (bytes, complete) = await ReadAsync(response, maxBytes, host, keys, cancellationToken).ConfigureAwait(false);
             return complete ? bytes : throw TooLarge(host, maxBytes, response);
         }
+    }
+
+    /// <summary>
+    /// Shortens an already redacted error body for <see cref="ProviderException.Detail"/>: trimmed, at most
+    /// <see cref="DetailMaxLength"/> characters (never splitting a surrogate pair), <c>null</c> when empty.
+    /// </summary>
+    /// <param name="redacted">The error body with keys removed.</param>
+    /// <returns>The detail, or <c>null</c>.</returns>
+    internal static string? DetailOf(string redacted)
+    {
+        var s = redacted.Trim();
+        if (s.Length == 0)
+        {
+            return null;
+        }
+
+        if (s.Length <= DetailMaxLength)
+        {
+            return s;
+        }
+
+        var cut = char.IsHighSurrogate(s[DetailMaxLength - 1]) ? DetailMaxLength - 1 : DetailMaxLength;
+        return s[..cut].TrimEnd() + "…";
     }
 
     private static ProviderException TooLarge(string host, int maxBytes, HttpResponseMessage response)

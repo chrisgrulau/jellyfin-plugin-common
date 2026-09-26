@@ -102,6 +102,45 @@ public sealed class SecretsAndHttpTests : IDisposable
     public void Statuses_are_classified(int status, string? body, int expected)
         => Assert.Equal((FailureClass)expected, HttpFailure.Classify((HttpStatusCode)status, body));
 
+    // FAM-06 follow-up: a 429 is a provider limit only when the provider says its allowance is used up
+    [Theory]
+    [InlineData(null, null, (int)FailureClass.Transient)]
+    [InlineData("Rate limit reached", 30, (int)FailureClass.Transient)]
+    [InlineData(null, 60, (int)FailureClass.Transient)]
+    [InlineData(null, 61, (int)FailureClass.ProviderLimit)]
+    [InlineData(null, 86400, (int)FailureClass.ProviderLimit)]
+    [InlineData("quota exceeded for today", null, (int)FailureClass.ProviderLimit)]
+    [InlineData("quota exceeded for today", 5, (int)FailureClass.ProviderLimit)]
+    public void A_429_is_a_provider_limit_only_when_the_provider_says_so(string? body, int? waitSeconds, int expected)
+    {
+        TimeSpan? wait = waitSeconds is { } w ? TimeSpan.FromSeconds(w) : null;
+        Assert.Equal((FailureClass)expected, HttpFailure.Classify(HttpStatusCode.TooManyRequests, body, wait));
+    }
+
+    [Fact]
+    public void A_long_wait_only_changes_the_class_of_a_429()
+    {
+        var day = TimeSpan.FromDays(1);
+        Assert.Equal(FailureClass.Transient, HttpFailure.Classify(HttpStatusCode.ServiceUnavailable, null, day));
+        Assert.Equal(FailureClass.BadRequest, HttpFailure.Classify(HttpStatusCode.BadRequest, "bad audio", day));
+        Assert.Equal(FailureClass.Authentication, HttpFailure.Classify(HttpStatusCode.Forbidden, null, day));
+    }
+
+    [Fact]
+    public void Any_429_is_rate_limited_whatever_its_class()
+    {
+        Assert.True(HttpFailure.IsRateLimited(new ProviderException("x") { StatusCode = HttpStatusCode.TooManyRequests, Failure = FailureClass.Transient }));
+        Assert.True(HttpFailure.IsRateLimited(new ProviderException("x") { StatusCode = HttpStatusCode.TooManyRequests, Failure = FailureClass.ProviderLimit }));
+        Assert.True(HttpFailure.IsRateLimited(new HttpRequestException("x", null, HttpStatusCode.TooManyRequests)));
+        Assert.True(new ProviderException("x") { StatusCode = HttpStatusCode.TooManyRequests }.RateLimited);
+
+        Assert.False(new ProviderException("x") { StatusCode = HttpStatusCode.ServiceUnavailable }.RateLimited);
+        Assert.False(new ProviderException("x") { Failure = FailureClass.ProviderLimit }.RateLimited);
+        Assert.False(HttpFailure.IsRateLimited(new HttpRequestException("x", null, HttpStatusCode.PaymentRequired)));
+        Assert.False(HttpFailure.IsRateLimited(new TimeoutException()));
+        Assert.False(HttpFailure.IsRateLimited(null));
+    }
+
     [Fact]
     public void No_network_is_told_apart_from_a_failing_service()
     {

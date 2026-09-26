@@ -27,6 +27,15 @@ All notable changes to this project are documented here. The format follows
   - `Costs/SpendingStore`: a plugin's ledger, shipped prices and exchange rates together, with rates refreshed when due.
   - `CurrencyCode.NormaliseOr(code, fallback)`: only supported codes pass.
 
+- **FAM-06 follow-up:** clearer rate limits and provider error text.
+  - An HTTP 429 is a provider limit when the provider says its allowance is used up: quota wording, or a wait longer
+    than 60 seconds (`HttpFailure.RateLimitWindow`). A shorter wait, or none, is transient with `RetryAfter` set.
+    `HttpFailure.Classify` takes the wait as an optional third argument; other statuses are classified as before.
+  - `ProviderException.RateLimited` (and `HttpFailure.IsRateLimited`) is true for any 429, for plugins that stop asking
+    a provider for the rest of a run on any rate limit.
+  - `ProviderException.Detail`: the provider's error reply alone (keys removed, trimmed, at most 500 characters), set
+    by `ProviderHttp`, so a plugin can word its own message around it. `Message` is unchanged.
+
 ### Fixed
 
 - **FAM-02:** the entry-point clients (`AiBridgeClient`, `SpeechBridgeClient`) send letters in every script as they
