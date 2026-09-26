@@ -8,9 +8,10 @@ It holds what every plugin that calls an external service needs, written once:
 
 | Area | What it does |
 |---|---|
-| Resilience | Classifies failures (no connection, transient, provider limit, authentication, bad request), reads the provider's `Retry-After`, and redacts secrets from error text. |
+| Resilience | Classifies failures (no connection, transient, provider limit, authentication, bad request), reads the provider's `Retry-After`, and redacts secrets from error text. `ProviderHttp` sends a provider request with all of that and a size-capped body; failures arrive as a `ProviderException`. |
 | Spending limits | Monthly limits overall and per provider, in the user's currency: every paid call is reserved against them first, then settled with its actual cost (or released). |
-| Spend tracking | A ledger of what every call cost (published prices × usage), kept for the prepaid-credit countdown. Unknown costs block paid calls rather than count as free. |
+| Spend tracking | A ledger of what every call cost (published prices × usage), kept for the prepaid-credit countdown. Unknown costs block paid calls rather than count as free. `MeteredCall` runs a paid call (reserve, then settle or release), and `SpendingStore` keeps a plugin's ledger, prices and self-refreshing rates together. |
+| Storage | `JsonFile` reads a JSON store as missing, loaded, damaged or unreadable, sets a damaged file aside, and writes atomically (optionally owner-only). |
 | Currencies | Keeps every cost in the currency it was charged in and converts it with the European Central Bank's daily reference rates (validated; the last good rates are kept while offline). |
 | Keys | An owner-only key file per plugin; keys are write-only from the settings pages. |
 | Cross-plugin calls | Clients for the AI plugin's and the Subtitles plugin's in-process entry points (JSON in and out, no shared types). |

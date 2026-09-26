@@ -14,6 +14,18 @@ All notable changes to this project are documented here. The format follows
     language matching silently found nothing.
   - The table was generated from .NET's own culture data.
 
+- **FAM-06:** shared building blocks, so the plugins stop keeping drifting copies.
+  - `Storage/JsonFile`: `Read<T>` tells a missing, loaded, damaged or unreadable file apart; `SetAside` moves a damaged
+    file to a timestamped name; `WriteAtomic` writes via a flushed temporary file and a rename, optionally owner-only.
+    `SpendLedger`, `ExchangeRateStore` and `KeyFile` use it, with their policies unchanged.
+  - `Resilience/ProviderException`: failure class, HTTP status, `RetryAfter`, and `Charged` with the usage to record.
+  - `Resilience/ProviderHttp`: `SendAsync` and `SendForBytesAsync` classify failures with `HttpFailure`, honour
+    `Retry-After`, cap every body (reply or error) at the caller's limit, and remove keys from messages.
+  - `Costs/MeteredCall`: reserve, call, then settle at the actual cost, settle a billed failure at what it used, or
+    release. `MeteredCallOptions` lets a plugin with its own exception type take part.
+  - `Costs/SpendingStore`: a plugin's ledger, shipped prices and exchange rates together, with rates refreshed when due.
+  - `CurrencyCode.NormaliseOr(code, fallback)`: only supported codes pass.
+
 ### Fixed
 
 - **FAM-02:** the entry-point clients (`AiBridgeClient`, `SpeechBridgeClient`) send letters in every script as they
