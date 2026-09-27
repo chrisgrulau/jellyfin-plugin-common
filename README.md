@@ -14,7 +14,7 @@ It holds what every plugin that calls an external service needs, written once:
 | Storage | `JsonFile` reads a JSON store as missing, loaded, damaged or unreadable, sets a damaged file aside, and writes atomically (optionally owner-only). |
 | Currencies | Keeps every cost in the currency it was charged in and converts it with the European Central Bank's daily reference rates (validated; the last good rates are kept while offline). |
 | Keys | An owner-only key file per plugin; keys are write-only from the settings pages. |
-| Cross-plugin calls | Clients for the AI plugin's and the Subtitles plugin's in-process entry points (JSON in and out, no shared types). |
+| Cross-plugin calls | Clients for the AI plugin's and the Subtitles plugin's in-process entry points (JSON in and out, no shared types), including the AI plugin's spending entry point: one budget, set in Shoal AI, for every paid service in the family, with each plugin's own ledger as the fallback. |
 
 Not built yet (planned): per-purpose and per-day budgets, request-rate limits, approve-before-running estimates, and
 shared user-facing alerts. Each plugin currently reports problems on its own page and in Jellyfin's Activity log.

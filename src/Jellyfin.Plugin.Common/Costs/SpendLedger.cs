@@ -82,8 +82,11 @@ internal sealed class SpendLedger
     /// <param name="estimate">The estimated cost, as the provider charges it.</param>
     /// <param name="limits">The limits.</param>
     /// <param name="rates">The latest exchange rates, if any.</param>
+    /// <param name="owner">The plugin that asked through the spending entry point (<c>subtitles</c> …), or <c>null</c>
+    /// for this plugin's own calls. Only the owner can settle or release the reservation, and an owned reservation left
+    /// open expires (see <see cref="ExpireOpen"/>).</param>
     /// <returns>The decision.</returns>
-    public SpendDecision TryReserve(string provider, string purpose, Money estimate, SpendLimits limits, ExchangeRates? rates)
+    public SpendDecision TryReserve(string provider, string purpose, Money estimate, SpendLimits limits, ExchangeRates? rates, string? owner = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(provider);
         ArgumentNullException.ThrowIfNull(limits);
@@ -139,7 +142,7 @@ internal sealed class SpendLedger
                 return new SpendDecision(null, $"This would go over {provider}'s monthly limit ({Show(spentProvider, limits)} of {Show(own.Value, limits)} used).");
             }
 
-            var entry = new SpendEntry { Id = Guid.NewGuid(), Provider = provider, Purpose = purpose ?? string.Empty, Amount = estimate, Time = now, Settled = false };
+            var entry = new SpendEntry { Id = Guid.NewGuid(), Provider = provider, Purpose = purpose ?? string.Empty, Amount = estimate, Time = now, Settled = false, Owner = owner };
             _entries!.Add(entry);
             Save();
             return new SpendDecision(entry.Id, null);
@@ -151,17 +154,24 @@ internal sealed class SpendLedger
     /// </summary>
     /// <param name="reservationId">The reservation.</param>
     /// <param name="actual">The actual cost, as charged.</param>
-    public void Settle(Guid reservationId, Money actual)
+    /// <param name="owner">The plugin settling it through the spending entry point, or <c>null</c> for this plugin's own
+    /// calls: a reservation is only settled by whoever made it.</param>
+    /// <returns><c>true</c> if it was recorded; <c>false</c> for an unknown or expired reservation, another owner's, or a
+    /// negative amount (an expired one stays at its estimate).</returns>
+    public bool Settle(Guid reservationId, Money actual, string? owner = null)
     {
         lock (_lock)
         {
             var list = Load();
             var i = list.FindIndex(e => e.Id == reservationId);
-            if (i >= 0 && actual.Amount >= 0)
+            if (i < 0 || actual.Amount < 0 || list[i].Expired || !string.Equals(list[i].Owner, owner, StringComparison.Ordinal))
             {
-                list[i] = list[i] with { Amount = actual, Settled = true };
-                Save();
+                return false;
             }
+
+            list[i] = list[i] with { Amount = actual, Settled = true };
+            Save();
+            return true;
         }
     }
 
@@ -169,14 +179,113 @@ internal sealed class SpendLedger
     /// Drops a reservation for a call that wasn't charged (it failed before the provider did any work).
     /// </summary>
     /// <param name="reservationId">The reservation.</param>
-    public void Release(Guid reservationId)
+    /// <param name="owner">The plugin releasing it through the spending entry point, or <c>null</c> for this plugin's own
+    /// calls.</param>
+    /// <returns><c>true</c> if it was dropped; <c>false</c> for an unknown, settled or expired reservation, or another
+    /// owner's.</returns>
+    public bool Release(Guid reservationId, string? owner = null)
     {
         lock (_lock)
         {
-            if (Load().RemoveAll(e => e.Id == reservationId && !e.Settled) > 0)
+            if (Load().RemoveAll(e => e.Id == reservationId && !e.Settled && string.Equals(e.Owner, owner, StringComparison.Ordinal)) > 0)
+            {
+                Save();
+                return true;
+            }
+
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Settles, at their estimates, reservations made through the spending entry point that have been open longer than
+    /// <paramref name="after"/> (the calling plugin stopped or crashed mid-call). That errs on the side of spending less:
+    /// the provider may have charged in full. A late settle or release of an expired reservation changes nothing.
+    /// This plugin's own reservations never expire (an open one keeps counting at its estimate anyway).
+    /// </summary>
+    /// <param name="after">How long a reservation may stay open.</param>
+    /// <returns>How many expired.</returns>
+    public int ExpireOpen(TimeSpan after)
+    {
+        lock (_lock)
+        {
+            var cutoff = _clock.GetLocalNow() - after;
+            var list = Load();
+            var expired = 0;
+            for (var i = 0; i < list.Count; i++)
+            {
+                if (list[i] is { Settled: false, Owner: not null } e && e.Time <= cutoff)
+                {
+                    list[i] = e with { Settled = true, Expired = true };
+                    expired++;
+                }
+            }
+
+            if (expired > 0)
             {
                 Save();
             }
+
+            return expired;
+        }
+    }
+
+    /// <summary>
+    /// Records, or replaces, spending made elsewhere this month that must count against the limits here: for example what
+    /// a plugin spent on its own ledger before this plugin owned its budget. The entry is keyed by owner, provider and
+    /// currency for the current month, so sending the same total again replaces it instead of adding it twice; 0 removes it.
+    /// It is recorded as settled whatever the limits say (the money is already spent).
+    /// </summary>
+    /// <param name="owner">The plugin reporting it.</param>
+    /// <param name="provider">Provider id.</param>
+    /// <param name="purpose">What for, for the record.</param>
+    /// <param name="amount">The month's total with that provider in that currency, as charged.</param>
+    public void RecordCarried(string owner, string provider, string purpose, Money amount)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(owner);
+        ArgumentException.ThrowIfNullOrWhiteSpace(provider);
+        if (amount.Amount < 0 || CurrencyCode.Normalise(amount.Currency) is null)
+        {
+            return;
+        }
+
+        lock (_lock)
+        {
+            var now = _clock.GetLocalNow();
+            var id = CarriedId(owner, provider, amount.Currency, now);
+            var list = Load();
+            var i = list.FindIndex(e => e.Id == id);
+            if (i >= 0)
+            {
+                list.RemoveAt(i);
+            }
+
+            if (amount.Amount > 0)
+            {
+                list.Add(new SpendEntry { Id = id, Provider = provider, Purpose = purpose ?? string.Empty, Amount = amount, Time = now, Settled = true, Owner = owner });
+            }
+
+            Save();
+        }
+    }
+
+    /// <summary>
+    /// This month's spending per provider and currency, as charged (open reservations included; entries carried in from
+    /// elsewhere and markers of an unreadable ledger left out): what this plugin reports when another one takes over
+    /// its budget.
+    /// </summary>
+    /// <returns>One amount per provider and currency.</returns>
+    public IReadOnlyList<(string Provider, Money Amount)> ThisMonthAsCharged()
+    {
+        lock (_lock)
+        {
+            var month = MonthOf(_clock.GetLocalNow());
+            return [.. Load()
+                .Where(e => MonthOf(e.Time) == month && e.Owner is null && CurrencyCode.IsSupported(e.Amount.Currency))
+                .GroupBy(e => (e.Provider, e.Amount.Currency))
+                .Select(g => (g.Key.Provider, new Money(g.Sum(e => e.Amount.Amount), g.Key.Currency)))
+                .OrderBy(p => p.Provider, StringComparer.Ordinal)
+                .ThenBy(p => p.Item2.Currency, StringComparer.Ordinal)];
         }
     }
 
@@ -246,6 +355,14 @@ internal sealed class SpendLedger
     }
 
     private static int MonthOf(DateTimeOffset t) => (t.Year * 12) + t.Month;
+
+    // The same id for the same owner, provider, currency and month, so a carried total is replaced, never added twice
+    private static Guid CarriedId(string owner, string provider, string currency, DateTimeOffset now)
+    {
+        var key = string.Join('|', "carried", owner, provider.ToUpperInvariant(), currency, MonthOf(now).ToString(System.Globalization.CultureInfo.InvariantCulture));
+        var hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(key));
+        return new Guid(hash.AsSpan(0, 16));
+    }
 
     private static bool SameProvider(string a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
 
@@ -332,5 +449,15 @@ internal sealed class SpendLedger
 
         [JsonPropertyName("settled")]
         public bool Settled { get; init; }
+
+        // The plugin that reserved it through the spending entry point; absent for this plugin's own calls
+        [JsonPropertyName("owner")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? Owner { get; init; }
+
+        // Settled at its estimate because it was left open too long (see ExpireOpen)
+        [JsonPropertyName("expired")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public bool Expired { get; init; }
     }
 }

@@ -51,8 +51,18 @@ time, and whether it has been settled.
 - **Storage:** the file is replaced atomically on every change (`JsonFile`). A damaged file is set aside, and paid use
   stops until the month ends. A file that can't be read right now (locked, a share hiccup) refuses that one call and is
   read again next time; it is neither moved nor overwritten.
-- **Ownership:** while each plugin owns its own budget, each keeps its own ledger. Once the AI plugin owns shared
-  budgets, it keeps this ledger for all of them.
+- **Ownership:** the AI plugin owns the family's budget: its ledger holds every paid call, its own and those the
+  Subtitles plugin makes (see *Spending entry point*). A plugin keeps its own ledger only for when the AI plugin isn't
+  installed or doesn't allow it.
+- **Owned reservations:** a reservation made through the spending entry point records its owner (`owner`, the calling
+  plugin); only the owner can settle or release it. One still open after an hour
+  (`SpendingBridgeClient.ReservationLifetime`: the caller stopped or crashed mid-call) is settled at its estimate
+  (`ExpireOpen`), which errs on the side of spending less; a late settle or release changes nothing. The owning plugin's
+  own reservations never expire (an open one keeps counting at its estimate anyway).
+- **Carried spending:** `RecordCarried` records, or replaces, what a plugin spent on its own ledger this month, one
+  entry per owner, provider and currency (a fixed id for the month), so reporting the same total twice never adds it
+  twice. `ThisMonthAsCharged` is what a plugin reports: its own entries this month per provider and currency, as
+  charged.
 
 ### Metered calls
 
@@ -67,6 +77,43 @@ time, and whether it has been settled.
 
 A plugin whose exception type is public (so it can't derive from the internal `ProviderException`) passes its own
 `MeteredCallOptions` (`IsCharged`, `ChargedCost`, `Refuse`).
+
+It reserves and settles on an `ISpendMeter`: `LocalSpendMeter` (the plugin's own ledger and limits; the overload taking
+a `SpendLedger` uses it) or `BridgedSpendMeter` (the AI plugin's budget, falling back to the plugin's own). Each
+reservation is settled or released on the meter that made it, so a call is counted in exactly one ledger.
+
+### Spending entry point
+
+One budget page: the currency, the overall monthly limit and every paid provider's limit (Claude, and the Subtitles
+plugin's Deepgram and OpenAI speech-to-text) are set in the AI plugin. Keys stay with the plugin that uses them. Other
+plugins meter their paid calls on the AI plugin's ledger through its in-process entry point,
+`Jellyfin.Plugin.Ai.Bridge.SpendingBridge.HandleAsync(string, CancellationToken)` in assembly `Jellyfin.Plugin.Ai`,
+declared once in `SpendingBridgeClient` and found by name like the other entry points.
+
+- **Request (version 1):** `{"version":1,"caller":"subtitles","op":…}` and, per `op`:
+
+  | `op` | Fields | Reply when it works |
+  |---|---|---|
+  | `reserve` | `purpose`, `provider`, `estimate` `{"amount":0.0125,"currency":"USD"}` | `reservationId` |
+  | `settle` | `reservationId`, `actual` (money) | — |
+  | `release` | `reservationId` | — |
+  | `carry` | `provider`, `amount` (money), `month` (`yyyy-MM`) | — |
+  | `summary` | — | `currency`, `limit` (null = none), `spent` (null = can't be converted), `perProvider`, `providerLimits`, `ratesDate`, `ratesFresh` |
+
+  Every reply has `version` and `ok`; a failure has `error` (safe to show) and `failure`: `not-allowed`,
+  `unsupported-version`, `bad-request`, `provider-limit` (the limits refuse the reserve), `transient`; the client adds
+  `not-installed`.
+- **Prices:** the caller prices its own calls with its own price table; the AI plugin converts them to the budget's
+  currency with its exchange rates and checks its limits. Speech providers are named `deepgram` and `openai-speech`
+  on the AI plugin's budget (apart from OpenAI's text models, `openai`).
+- **Falling back:** `not-installed`, `unsupported-version` and `not-allowed` (`SpendingBridgeClient.MeansOwnBudget`)
+  mean the AI plugin doesn't keep this caller's budget: `BridgedSpendMeter` then reserves on the caller's own ledger with
+  its own settings, as before. A refusal by the limits, or no answer (`transient`), refuses the call instead: the AI
+  plugin's limits wouldn't see spending on the caller's own ledger.
+- **This month's earlier spending:** before reserving through the AI plugin, `SpendCarry` reports the caller's own
+  spending this month (`carry`, one total per provider and currency, sent again only when it changed and replacing
+  what was sent before), so the month's limit counts it once. The caller's own ledger keeps its entries, for when it
+  falls back; no ledger ever holds a call twice.
 
 ### Spending store
 
@@ -92,7 +139,7 @@ currency. So:
   again. A charge already in the user's currency needs no rates.
 - An optional **extra percentage** is added to every converted cost, for taxes charged on overseas services (such as
   GST) or a card's foreign-transaction fee. It defaults to 0.
-- When a budget is shared across plugins, its owner (see *Budgets*) also owns its currency.
+- When a budget is shared across plugins, its owner (the AI plugin, see *Spending entry point*) also owns its currency.
 - A currency setting is read with `CurrencyCode.NormaliseOr(code, "USD")`: only a supported code passes; anything else
   is the fallback.
 

@@ -7,6 +7,20 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **One budget page:** the spending entry point, so the AI plugin keeps the family's one budget.
+  - `SpendingBridgeClient`: the versioned contract (version 1) for the AI plugin's
+    `Jellyfin.Plugin.Ai.Bridge.SpendingBridge.HandleAsync`, found by name; operations `reserve`, `settle`,
+    `release`, `carry` (this month's earlier spending) and `summary`, JSON in and out with `BridgeJson`.
+  - `ISpendMeter`, with `LocalSpendMeter` (a plugin's own ledger) and `BridgedSpendMeter` (the AI plugin's budget,
+    falling back to the plugin's own when the AI plugin isn't installed, is too old or new, or doesn't allow it). A
+    reservation is settled where it was made, so a call is counted once. `MeteredCall.RunAsync` takes either; the
+    overload taking a `SpendLedger` is unchanged.
+  - `SpendCarry` reports a plugin's own spending this month once, and again when it changes, as totals that replace
+    what was sent before.
+  - `SpendLedger`: reservations made through the entry point have an owner, who alone can settle or release them,
+    and are settled at their estimate if left open for an hour (`ExpireOpen`); `RecordCarried` and
+    `ThisMonthAsCharged`. `Settle` and `Release` now say whether they changed anything.
+
 - **FAM-01:** `IsoLanguages`, which maps ISO 639 codes and names without the server's culture data.
   - It maps two-letter, three-letter (terminology and bibliographic) and English-name forms to each other, for 137
     languages.
