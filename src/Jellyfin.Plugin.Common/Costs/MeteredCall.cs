@@ -44,16 +44,16 @@ internal sealed record MeteredCallOptions
 }
 
 /// <summary>
-/// Runs a paid call within the spending limits, in one place for every plugin: its estimated cost is reserved on the
-/// <see cref="SpendLedger"/> first (the call isn't made if the limits refuse it); a successful call is settled at its
-/// actual cost; a call that failed but was billed anyway (see <see cref="MeteredCallOptions.IsCharged"/>) is settled at
+/// Runs a paid call within the spending limits, in one place for every plugin: its estimated cost is reserved first, on
+/// the plugin's <see cref="SpendLedger"/> or another <see cref="ISpendMeter"/> such as the AI plugin's budget (the call
+/// isn't made if the limits refuse it); a successful call is settled at its actual cost; a call that failed but was billed anyway (see <see cref="MeteredCallOptions.IsCharged"/>) is settled at
 /// what it used; a failure that certainly wasn't billed (see <see cref="MeteredCallOptions.IsUncharged"/>, cancellation
 /// included) releases the reservation; an unexpected failure is recorded at the estimate.
 /// </summary>
 internal static class MeteredCall
 {
     /// <summary>
-    /// Reserves, runs the call, then settles or releases.
+    /// Reserves on this plugin's own ledger, runs the call, then settles or releases.
     /// </summary>
     /// <typeparam name="T">What the call returns.</typeparam>
     /// <param name="ledger">The spend ledger.</param>
@@ -68,7 +68,7 @@ internal static class MeteredCall
     /// <param name="cancellationToken">Cancellation token, passed to the call.</param>
     /// <returns>The call's result.</returns>
     /// <exception cref="Exception">The refusal from <see cref="MeteredCallOptions.Refuse"/>, or whatever the call threw.</exception>
-    public static async Task<T> RunAsync<T>(
+    public static Task<T> RunAsync<T>(
         SpendLedger ledger,
         SpendLimits limits,
         ExchangeRates? rates,
@@ -82,11 +82,40 @@ internal static class MeteredCall
     {
         ArgumentNullException.ThrowIfNull(ledger);
         ArgumentNullException.ThrowIfNull(limits);
+        return RunAsync(new LocalSpendMeter(ledger, limits, () => rates), provider, purpose, estimate, call, actualCost, options, cancellationToken);
+    }
+
+    /// <summary>
+    /// Reserves on a meter (this plugin's ledger, or a budget another plugin owns), runs the call, then settles or releases
+    /// on the same meter.
+    /// </summary>
+    /// <typeparam name="T">What the call returns.</typeparam>
+    /// <param name="meter">Where the cost is reserved and settled.</param>
+    /// <param name="provider">Provider id.</param>
+    /// <param name="purpose">What the call is for (<c>subtitles.sync</c> …), for the record.</param>
+    /// <param name="estimate">The most the call is expected to cost, as the provider charges it.</param>
+    /// <param name="call">The call.</param>
+    /// <param name="actualCost">What a successful call cost, from its result, or <c>null</c> to record the estimate.</param>
+    /// <param name="options">How billed failures are recognised and refusals thrown, or <c>null</c> for <see cref="MeteredCallOptions.Default"/>.</param>
+    /// <param name="cancellationToken">Cancellation token, passed to the call.</param>
+    /// <returns>The call's result.</returns>
+    /// <exception cref="Exception">The refusal from <see cref="MeteredCallOptions.Refuse"/>, or whatever the call threw.</exception>
+    public static async Task<T> RunAsync<T>(
+        ISpendMeter meter,
+        string provider,
+        string purpose,
+        Money estimate,
+        Func<CancellationToken, Task<T>> call,
+        Func<T, Money?> actualCost,
+        MeteredCallOptions? options,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(meter);
         ArgumentNullException.ThrowIfNull(call);
         ArgumentNullException.ThrowIfNull(actualCost);
         var o = options ?? MeteredCallOptions.Default;
 
-        var decision = ledger.TryReserve(provider, purpose, estimate, limits, rates);
+        var decision = await meter.ReserveAsync(provider, purpose, estimate, cancellationToken).ConfigureAwait(false);
         if (decision.ReservationId is not { } reservation)
         {
             throw o.Refuse(decision.Refusal ?? "Not allowed by the spending limits.");
@@ -100,23 +129,23 @@ internal static class MeteredCall
         catch (Exception ex) when (o.IsCharged(ex))
         {
             // Answered and billed, but unusable (a refusal, cut off, unreadable): recorded at what it used
-            Settle(ledger, reservation, o.ChargedCost(ex) ?? estimate, o);
+            await SettleAsync(meter, reservation, o.ChargedCost(ex) ?? estimate, o).ConfigureAwait(false);
             throw;
         }
         catch (Exception ex) when (o.IsUncharged(ex))
         {
             // Refused by the provider, never answered, or cancelled: not charged
-            ledger.Release(reservation);
+            await meter.ReleaseAsync(reservation).ConfigureAwait(false);
             throw;
         }
         catch (Exception)
         {
             // Unexpected: it may have been billed, so it is recorded at the estimate
-            Settle(ledger, reservation, estimate, o);
+            await SettleAsync(meter, reservation, estimate, o).ConfigureAwait(false);
             throw;
         }
 
-        Settle(ledger, reservation, SafeCost(actualCost, result) ?? estimate, o);
+        await SettleAsync(meter, reservation, SafeCost(actualCost, result) ?? estimate, o).ConfigureAwait(false);
         return result;
     }
 
@@ -127,9 +156,9 @@ internal static class MeteredCall
         return cost is { Amount: >= 0 } ? cost : null;
     }
 
-    private static void Settle(SpendLedger ledger, Guid reservation, Money actual, MeteredCallOptions o)
+    private static async Task SettleAsync(ISpendMeter meter, Guid reservation, Money actual, MeteredCallOptions o)
     {
-        ledger.Settle(reservation, actual);
+        await meter.SettleAsync(reservation, actual).ConfigureAwait(false);
         o.Recorded?.Invoke(actual);
     }
 }
